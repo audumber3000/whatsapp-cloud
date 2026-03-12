@@ -1,0 +1,13 @@
+services:
+  whatsapp-app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend/database.sqlite:/app/backend/database.sqlite
+      - ./backend/.wwebjs_auth:/app/backend/.wwebjs_auth
+      - ./backend/sessions:/app/backend/sessions
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - CHROME_PATH=/usr/bin/chromium

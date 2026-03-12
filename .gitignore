@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+dist/
+.env
+.env.*
+
+# Backend specific
+backend/data/
+backend/change_pass.exp
+backend/setup_ssh.exp
+backend/setup_server.sh
+backend/deploy.sh
+backend/deploy_key
+backend/deploy_key.pub
+backend/.wwebjs_auth/
+backend/.wwebjs_cache/
+backend/public/
+
+# Frontend specific
+frontend/node_modules/
+frontend/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
