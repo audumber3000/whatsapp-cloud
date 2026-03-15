@@ -47,8 +47,15 @@ function createClient(userId) {
     }
 
     // Clean up locks
-    const lockPath = path.join(__dirname, sessionDirName, 'session', 'SingletonLock');
-    if (fs.existsSync(lockPath)) { try { fs.unlinkSync(lockPath); } catch(e) {} }
+    const sessionPath = path.join(__dirname, sessionDirName, 'session');
+    if (fs.existsSync(sessionPath)) {
+        const files = fs.readdirSync(sessionPath);
+        files.forEach(file => {
+            if (file.startsWith('Singleton')) {
+                try { fs.unlinkSync(path.join(sessionPath, file)); } catch(e) {}
+            }
+        });
+    }
 
     const isLinuxARM = process.platform === 'linux' && (process.arch === 'arm64' || process.arch === 'aarch64' || process.arch === 'arm');
     const defaultChromePath = isLinuxARM ? '/usr/bin/chromium-browser' : undefined;
