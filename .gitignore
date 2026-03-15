@@ -6,6 +6,7 @@ dist/
 
 # Backend specific
 backend/data/
+backend/sessions/
 backend/change_pass.exp
 backend/setup_ssh.exp
 backend/setup_server.sh
