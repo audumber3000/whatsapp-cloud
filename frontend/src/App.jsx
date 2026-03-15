@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Search, LogOut, Link2Off,
-  CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle
+  CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -18,6 +18,7 @@ function App() {
   // WA Connection State
   const [isLinked, setIsLinked] = useState(false);
   const [qrCodeData, setQrCodeData] = useState('');
+  const [userPhone, setUserPhone] = useState(null);
 
   // Setup Socket.io connection for real-time updates
   useEffect(() => {
@@ -25,7 +26,8 @@ function App() {
       console.log('Connecting to Socket.io...');
       const socket = io(SOCKET_URL, {
         path: '/socket.io/',
-        transports: ['websocket', 'polling']
+        transports: ['websocket', 'polling'],
+        auth: { token }
       });
 
       socket.on('connect', () => {
@@ -36,6 +38,7 @@ function App() {
         console.log('WA Status update received via socket:', data);
         setIsLinked(data.isConnected);
         setQrCodeData(data.currentQR);
+        setUserPhone(data.phone);
       });
 
       socket.on('connect_error', (err) => {
@@ -64,6 +67,7 @@ function App() {
       if (res.ok) {
         setIsLinked(false);
         setQrCodeData('');
+        setUserPhone(null);
       } else {
         alert("Failed to disconnect.");
       }
@@ -90,29 +94,29 @@ function App() {
         <div className="nav-menu">
           <div
             className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => isLinked && setActiveTab('dashboard')}
-            style={{ opacity: !isLinked && activeTab !== 'dashboard' ? 0.5 : 1, cursor: !isLinked ? 'not-allowed' : 'pointer' }}
+            onClick={() => setActiveTab('dashboard')}
           >
             <LayoutDashboard size={20} />
             Dashboard
           </div>
           <div
             className={`nav-item ${activeTab === 'automations' ? 'active' : ''}`}
-            onClick={() => isLinked && setActiveTab('automations')}
-            style={{ opacity: !isLinked ? 0.5 : 1, cursor: !isLinked ? 'not-allowed' : 'pointer' }}
+            onClick={() => setActiveTab('automations')}
           >
             <Zap size={20} />
             Automations
           </div>
           <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => isLinked && setActiveTab('logs')}
-            style={{ opacity: !isLinked ? 0.5 : 1, cursor: !isLinked ? 'not-allowed' : 'pointer' }}
+            onClick={() => setActiveTab('logs')}
           >
             <Activity size={20} />
             Activity Logs
           </div>
-          <div className="nav-item">
+          <div 
+             className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+             onClick={() => setActiveTab('settings')}
+          >
             <Settings size={20} />
             Settings
           </div>
@@ -135,6 +139,7 @@ function App() {
             {activeTab === 'dashboard' && 'Dashboard Overview'}
             {activeTab === 'automations' && 'Manage Automations'}
             {activeTab === 'logs' && 'Message Logs'}
+            {activeTab === 'settings' && 'User Settings'}
           </div>
 
           <div className="header-actions">
@@ -143,7 +148,7 @@ function App() {
             </button>
             <div className="user-profile">
               <div className="user-info">
-                <span className="user-name">Admin</span>
+                <span className="user-name">User</span>
               </div>
               <button className="icon-btn" onClick={handleLogout} title="Logout" style={{ marginLeft: 8 }}>
                 <LogOut size={16} />
@@ -153,7 +158,7 @@ function App() {
         </div>
 
         <div className="page-content">
-          {!isLinked ? (
+          {!isLinked && activeTab !== 'settings' ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -166,7 +171,7 @@ function App() {
 
                 <div className="qr-box">
                   {qrCodeData ? (
-                    <QRCodeSVG value={qrCodeData} size={200} level="L" />
+                     <QRCodeSVG value={qrCodeData} size={200} level="L" />
                   ) : (
                     <div className="qr-placeholder-img">
                       <span style={{ color: '#94a3b8', fontSize: '14px' }}>QR Code Loading...</span>
@@ -179,9 +184,10 @@ function App() {
             </div>
           ) : (
             <>
-              {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} />}
+              {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} />}
               {activeTab === 'automations' && <AutomationsView token={token} />}
               {activeTab === 'logs' && <LogsView token={token} />}
+              {activeTab === 'settings' && <SettingsView token={token} />}
             </>
           )}
         </div>
@@ -277,14 +283,14 @@ function AuthView({ setToken }) {
 
 // --- SUBVIEWS ---
 
-function DashboardView({ token, setActiveTab }) {
+function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
   const [stats, setStats] = useState({ sent: 0, failed: 0, activeAutomations: 0 });
   const [recentAutomations, setRecentAutomations] = useState([]);
   const [recentLogs, setRecentLogs] = useState([]);
 
   useEffect(() => {
     fetch(`${API_URL}/dashboard/stats`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(res => res.json()).then(data => setStats(data)).catch();
+      .then(res => res.json()).then(data => setStats(prev => ({ ...prev, ...data }))).catch();
 
     fetch(`${API_URL}/automations`, { headers: { 'Authorization': `Bearer ${token}` } })
       .then(res => res.json()).then(data => setRecentAutomations(data.slice(0, 3))).catch();
@@ -295,6 +301,26 @@ function DashboardView({ token, setActiveTab }) {
 
   return (
     <div className="view-container">
+      
+      {/* Session Status Banner */}
+      <div style={{ display: 'flex', alignItems: 'center', background: '#fff', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '24px', justifyContent: 'space-between' }}>
+         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+             <MessageCircle size={28} color={isLinked ? 'var(--primary)' : '#94a3b8'} />
+             <div>
+                <div style={{ fontWeight: 600, color: '#1e293b', fontSize: '15px' }}>WhatsApp Session Status</div>
+                <div style={{ color: '#64748b', fontSize: '13px' }}>
+                   {userPhone ? `Connected as +${userPhone}` : 'No phone linked'}
+                </div>
+             </div>
+         </div>
+         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: isLinked ? 'var(--primary)' : 'var(--danger)' }}></div>
+            <span style={{ fontWeight: 600, color: isLinked ? 'var(--primary)' : 'var(--danger)' }}>
+                {isLinked ? 'Active' : 'Disconnected / Blocked'}
+            </span>
+         </div>
+      </div>
+
       <div className="stats-row">
         <div className="stat-box">
           <span className="stat-title">Messages Sent</span>
@@ -364,7 +390,7 @@ function DashboardView({ token, setActiveTab }) {
 function AutomationsView({ token }) {
   const [automations, setAutomations] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: '', contacts: '', active_days: [1,2,3,4,5] });
+  const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5] });
   const [editAutomationId, setEditAutomationId] = useState(null);
 
   const fetchAutomations = () => {
@@ -380,12 +406,19 @@ function AutomationsView({ token }) {
     try {
       const res = await fetch(`${API_URL}/automations/${id}`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) {
-        const data = await res.json();
+        let data = await res.json();
+        
+        // ensure backwards compatibility if database had string
+        let blocks = data.message_template;
+        if (typeof blocks === 'string') {
+           blocks = [{ variations: [blocks] }];
+        }
+
         setFormData({
           name: data.name,
           start_time: data.start_time,
           end_time: data.end_time,
-          message_template: data.message_template,
+          message_template: Array.isArray(blocks) ? blocks : [{ variations: [''] }],
           contacts: data.contacts ? data.contacts.join(', ') : '',
           active_days: data.active_days ? JSON.parse(data.active_days) : [1,2,3,4,5]
         });
@@ -399,16 +432,84 @@ function AutomationsView({ token }) {
     }
   };
 
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this automation completely?")) return;
+    try {
+      const res = await fetch(`${API_URL}/automations/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchAutomations();
+      } else {
+        alert("Failed to delete automation.");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleToggle = async (id) => {
+    try {
+      const res = await fetch(`${API_URL}/automations/${id}/toggle`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchAutomations();
+      } else {
+        alert("Failed to toggle automation.");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const closeModal = () => {
     setShowModal(false);
     setEditAutomationId(null);
-    setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: '', contacts: '', active_days: [1,2,3,4,5] });
+    setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5] });
+  };
+
+  const handleAddBlock = () => {
+     setFormData({ ...formData, message_template: [...formData.message_template, { variations: [''] }] });
+  };
+
+  const handleRemoveBlock = (index) => {
+     const newBlocks = [...formData.message_template];
+     newBlocks.splice(index, 1);
+     setFormData({ ...formData, message_template: newBlocks });
+  };
+
+  const handleAddVariation = (blockIndex) => {
+     const newBlocks = [...formData.message_template];
+     newBlocks[blockIndex].variations.push('');
+     setFormData({ ...formData, message_template: newBlocks });
+  };
+
+  const handleRemoveVariation = (blockIndex, varIndex) => {
+     const newBlocks = [...formData.message_template];
+     newBlocks[blockIndex].variations.splice(varIndex, 1);
+     setFormData({ ...formData, message_template: newBlocks });
+  };
+
+  const handleVariationChange = (blockIndex, varIndex, value) => {
+     const newBlocks = [...formData.message_template];
+     newBlocks[blockIndex].variations[varIndex] = value;
+     setFormData({ ...formData, message_template: newBlocks });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     const contactList = formData.contacts.split(',').map(s => s.trim()).filter(Boolean);
     if (contactList.length === 0) return alert("Please enter at least one contact phone number.");
+
+    if (formData.message_template.length === 0) return alert("Please add at least one message block.");
+    for (const b of formData.message_template) {
+       if (b.variations.filter(v => v.trim()).length === 0) {
+           return alert("Every message block must have at least one non-empty variation.");
+       }
+    }
 
     const endpoint = editAutomationId ? `${API_URL}/automations/${editAutomationId}` : `${API_URL}/automations`;
     const method = editAutomationId ? 'PUT' : 'POST';
@@ -442,7 +543,9 @@ function AutomationsView({ token }) {
             <h3>All Workflows</h3>
             <p className="card-desc">Manage your intelligent message flows and triggers.</p>
           </div>
-          <button className="btn-primary" onClick={() => { setEditAutomationId(null); setShowModal(true); }}><Plus size={16} /> New Automation</button>
+          <button className="btn-primary" onClick={() => { setEditAutomationId(null); setFormData(f => ({...f, message_template: [{ variations: [''] }]})); setShowModal(true); }}>
+            <Plus size={16} /> New Automation
+          </button>
         </div>
 
         <div className="automation-grid">
@@ -464,7 +567,15 @@ function AutomationsView({ token }) {
                   <span className="lbl">Queue size:</span> {task.count}
                 </div>
               </div>
-              <button className="btn-outline" onClick={() => handleEditClick(task.id)}>Edit Flow</button>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                <button className="btn-outline" style={{ flex: 1, color: task.status === 'Active' ? 'var(--danger)' : 'var(--primary)', borderColor: task.status === 'Active' ? 'var(--danger)' : 'var(--primary)' }} onClick={() => handleToggle(task.id)}>
+                   {task.status === 'Active' ? 'Stop' : 'Start'}
+                </button>
+                <button className="btn-outline" style={{ flex: 1 }} onClick={() => handleEditClick(task.id)}>Edit</button>
+                <button className="btn-outline" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', padding: '0 12px' }} onClick={() => handleDelete(task.id)}>
+                   <Trash2 size={16} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -472,7 +583,7 @@ function AutomationsView({ token }) {
 
       {showModal && (
         <div className="modal-overlay">
-          <div className="modal-content">
+          <div className="modal-content" style={{ maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto' }}>
             <h2 style={{ marginBottom: '16px' }}>{editAutomationId ? 'Edit Automation Rule' : 'Create Automation Rule'}</h2>
 
             <div className="alert-box warning">
@@ -481,9 +592,8 @@ function AutomationsView({ token }) {
                 <strong>Safe Sending Guidelines</strong>
                 <p>To avoid WhatsApp banning your number from automated systems:</p>
                 <ul style={{ marginLeft: '20px', marginTop: '4px' }}>
-                  <li>Always schedule messages across a broad time window (several hours).</li>
-                  <li>Our algorithm auto-randomizes message intervals inside your window.</li>
-                  <li>Do not send to more than 50 unknown contacts per day.</li>
+                  <li>We send your grouped messages concurrently but randomize intervals inside your overall window.</li>
+                  <li>Use Variations! Our system will pick a random variation from a block to make chats look organic.</li>
                 </ul>
               </div>
             </div>
@@ -533,7 +643,7 @@ function AutomationsView({ token }) {
               </div>
 
               <div className="form-group" style={{ margin: 0 }}>
-                <label>Contacts (Comma separated WhatsApp numbers)</label>
+                <label>Contacts (Comma separated numeric strings)</label>
                 <textarea
                   required
                   rows={3}
@@ -544,16 +654,51 @@ function AutomationsView({ token }) {
                 />
               </div>
 
+              {/* Dynamic Multiple Messages + Variations Component */}
               <div className="form-group" style={{ margin: 0 }}>
-                <label>Message Content</label>
-                <textarea
-                  required
-                  rows={4}
-                  placeholder="Hello! This is a friendly reminder..."
-                  value={formData.message_template}
-                  onChange={e => setFormData({ ...formData, message_template: e.target.value })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', resize: 'vertical' }}
-                />
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <label style={{ margin: 0 }}>Message Sequence</label>
+                    <button type="button" className="btn-text" onClick={handleAddBlock} style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '13px' }}>
+                       + Add Message Block
+                    </button>
+                 </div>
+                 <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '12px' }}>
+                    Multiple Blocks will be sent independently one after another as sequential messages. Adding variations to a block prevents account bans.
+                 </div>
+
+                 {formData.message_template.map((block, blockIndex) => (
+                    <div key={blockIndex} style={{ border: '1px solid var(--border-color)', background: '#f8fafc', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                          <h4 style={{ margin: 0, fontSize: '14px', color: '#334155' }}>Message Block {blockIndex + 1}</h4>
+                          {formData.message_template.length > 1 && (
+                             <button type="button" onClick={() => handleRemoveBlock(blockIndex)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0 }}>
+                                Remove
+                             </button>
+                          )}
+                       </div>
+
+                       {block.variations.map((varText, varIndex) => (
+                           <div key={varIndex} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'flex-start' }}>
+                              <textarea
+                                required
+                                rows={2}
+                                placeholder={`Variation ${varIndex + 1} for block ${blockIndex + 1}...`}
+                                value={varText}
+                                onChange={(e) => handleVariationChange(blockIndex, varIndex, e.target.value)}
+                                style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', resize: 'vertical', fontSize: '13px' }}
+                              />
+                              {block.variations.length > 1 && (
+                                <button type="button" onClick={() => handleRemoveVariation(blockIndex, varIndex)} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px', borderRadius: '6px', color: '#64748b', cursor: 'pointer' }}>
+                                   <XCircle size={16} />
+                                </button>
+                              )}
+                           </div>
+                       ))}
+                       <button type="button" className="btn-text" onClick={() => handleAddVariation(blockIndex)} style={{ fontSize: '12px', color: '#475569' }}>
+                          + Add Variation
+                       </button>
+                    </div>
+                 ))}
               </div>
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
@@ -575,7 +720,6 @@ function LogsView({ token }) {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    // Note: Search filtering is omitted in API for brevity, but page querying works
     fetch(`${API_URL}/logs?page=${page}&limit=10`, { headers: { 'Authorization': `Bearer ${token}` } })
       .then(res => res.json())
       .then(data => {
@@ -585,7 +729,6 @@ function LogsView({ token }) {
       .catch();
   }, [page, token]);
 
-  // Client side search filter for demo
   const currentData = logs.filter(log => (log.contact || '').toLowerCase().includes(search.toLowerCase()));
 
   return (
@@ -653,6 +796,88 @@ function LogsView({ token }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SettingsView({ token }) {
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [msg, setMsg] = useState({ text: '', type: '' });
+
+  useEffect(() => {
+     fetch(`${API_URL}/settings`, { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(d => {
+           if(d.email) setEmail(d.email);
+           if(d.personal_whatsapp_number) setPhone(d.personal_whatsapp_number);
+        }).catch(console.error);
+  }, [token]);
+
+  const handleSave = async (e) => {
+     e.preventDefault();
+     setMsg({ text: '', type: '' });
+     try {
+       const res = await fetch(`${API_URL}/settings`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, personal_whatsapp_number: phone })
+       });
+       if(res.ok) {
+          setMsg({ text: 'Settings saved successfully!', type: 'success' });
+       } else {
+          setMsg({ text: 'Failed to save settings.', type: 'error' });
+       }
+     } catch(e) {
+       setMsg({ text: e.message, type: 'error' });
+     }
+  };
+
+  return (
+    <div className="view-container">
+       <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+          <div className="card-header">
+             <div className="card-title-group">
+                <h3>Account Settings</h3>
+                <p className="card-desc">Update your personal preferences and contact details.</p>
+             </div>
+           </div>
+           <form style={{ padding: '24px' }} onSubmit={handleSave}>
+             {msg.text && (
+                <div style={{ padding: '12px', background: msg.type==='success'?'#dcfce7':'#fee2e2', color: msg.type==='success'?'#15803d':'#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
+                   {msg.text}
+                </div>
+             )}
+
+             {/* Notification info banner */}
+             <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+               <span style={{ fontSize: '18px', lineHeight: 1 }}>🔔</span>
+               <div style={{ fontSize: '13px', color: '#0369a1' }}>
+                 <strong>Notification Settings</strong><br />
+                 The details below are used to send you <strong>daily campaign summary reports</strong> via WhatsApp — including total messages sent, failed deliveries, and campaign timings — once each automation finishes for the day.
+               </div>
+             </div>
+
+             <div className="form-group">
+                <label>Email Address</label>
+                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
+                <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Reserved for future email notifications. Optional.</p>
+             </div>
+             
+             <div className="form-group" style={{ marginTop: '16px' }}>
+                <label>Personal WhatsApp Number</label>
+                <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 15551234567" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
+                <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Enter your number with country code but <strong>without</strong> the +. E.g. for +91 98765 43210 enter <code>919876543210</code>. Daily campaign summaries will be sent here once all messages are dispatched.</p>
+             </div>
+
+             <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="submit" className="btn-primary">Save Settings</button>
+             </div>
+          </form>
+       </div>
     </div>
   );
 }

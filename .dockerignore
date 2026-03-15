@@ -1,8 +1,9 @@
 **/node_modules
 dist
-.wwebjs_auth
-.wwebjs_cache
 **/dist
 .DS_Store
 *.local
+backend/data/*.sqlite
+backend/.wwebjs_auth_user_*
+backend/.wwebjs_cache
 

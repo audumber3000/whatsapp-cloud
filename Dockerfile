@@ -57,8 +57,8 @@ COPY backend/package*.json ./
 RUN npm install
 
 COPY backend/ ./
-# Copy built frontend from Stage 1
-COPY --from=frontend-builder /app/backend/public ./public
+# Copy built frontend from Stage 1 (Vite default is 'dist')
+COPY --from=frontend-builder /app/frontend/dist ./public
 
 EXPOSE 3000
 

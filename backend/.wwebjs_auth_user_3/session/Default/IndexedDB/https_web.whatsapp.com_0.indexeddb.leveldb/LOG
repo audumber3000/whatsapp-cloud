@@ -1,0 +1,26 @@
+2026/03/15-00:20:36.711 54f385 Reusing MANIFEST /Users/audii3000/Documents/Personal Projects/Clould-whatsapp-app/backend/.wwebjs_auth_user_3/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/03/15-00:20:36.711 54f385 Recovering log #272
+2026/03/15-00:20:36.727 54f385 Reusing old log /Users/audii3000/Documents/Personal Projects/Clould-whatsapp-app/backend/.wwebjs_auth_user_3/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000272.log 
+2026/03/15-00:20:40.552 54f385 Level-0 table #284: started
+2026/03/15-00:20:40.562 54f385 Level-0 table #284: 1151672 bytes OK
+2026/03/15-00:20:40.564 54f385 Delete type=0 #272
+2026/03/15-00:20:41.010 54f385 Compacting 1@1 + 8@2 files
+2026/03/15-00:20:41.049 54f385 Generated table #285@1: 52767 keys, 2216008 bytes
+2026/03/15-00:20:41.078 54f385 Generated table #286@1: 56486 keys, 2222459 bytes
+2026/03/15-00:20:41.089 54f385 Generated table #287@1: 3221 keys, 2155104 bytes
+2026/03/15-00:20:41.098 54f385 Generated table #288@1: 1909 keys, 2154114 bytes
+2026/03/15-00:20:41.121 54f385 Generated table #289@1: 27196 keys, 2237561 bytes
+2026/03/15-00:20:41.145 54f385 Generated table #290@1: 24777 keys, 2256914 bytes
+2026/03/15-00:20:41.166 54f385 Generated table #291@1: 67055 keys, 2207407 bytes
+2026/03/15-00:20:41.187 54f385 Generated table #292@1: 72031 keys, 1845894 bytes
+2026/03/15-00:20:41.187 54f385 Compacted 1@1 + 8@2 files => 17295461 bytes
+2026/03/15-00:20:41.190 54f385 compacted to: files[ 0 0 8 0 0 0 0 ]
+2026/03/15-00:20:41.190 54f385 Delete type=2 #274
+2026/03/15-00:20:41.190 54f385 Delete type=2 #275
+2026/03/15-00:20:41.190 54f385 Delete type=2 #277
+2026/03/15-00:20:41.190 54f385 Delete type=2 #276
+2026/03/15-00:20:41.190 54f385 Delete type=2 #281
+2026/03/15-00:20:41.190 54f385 Delete type=2 #280
+2026/03/15-00:20:41.190 54f385 Delete type=2 #284
+2026/03/15-00:20:41.190 54f385 Delete type=2 #278
+2026/03/15-00:20:41.190 54f385 Delete type=2 #279
