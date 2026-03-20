@@ -125,7 +125,11 @@ function createClient(userId) {
         emitStatus(userId);
     });
 
-    newClient.initialize();
+    newClient.initialize().catch(err => {
+        console.error(`[WA User ${userId}] Failed to initialize WhatsApp client:`, err);
+        sessionData.isConnected = false;
+        emitStatus(userId);
+    });
     return newClient;
 }
 
@@ -182,10 +186,18 @@ const disconnectClient = async (userId) => {
     }
 };
 
+const notifyUser = (userId, type, message) => {
+    if (io) {
+        console.log(`[WA] Sending notification to user ${userId}: ${message}`);
+        io.to(`user_${userId}`).emit('notification', { type, message, timestamp: new Date().toISOString() });
+    }
+};
+
 module.exports = {
     sendMessage,
     disconnectClient,
     setIo,
     getStatus,
-    initializeUserClient
+    initializeUserClient,
+    notifyUser
 };

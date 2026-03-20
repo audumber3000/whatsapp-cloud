@@ -7,9 +7,36 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 
 import { io } from 'socket.io-client';
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea
+} from 'recharts';
 
 const API_URL = '/api';
-const SOCKET_URL = window.location.origin; // Base URL for socket connection
+const SOCKET_URL = window.location.origin;
+
+// Helper to get local timezone and region info
+const getTimezoneInfo = () => {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = new Date().getTimezoneOffset();
+  const absOffset = Math.abs(offset);
+  const sign = offset > 0 ? '-' : '+';
+  const hours = String(Math.floor(absOffset / 60)).padStart(2, '0');
+  const mins = String(absOffset % 60).padStart(2, '0');
+  const gmt = `GMT${sign}${hours}:${mins}`;
+
+  // Mapping for country name and flag based on common timezone cities
+  let flag = '🌍';
+  let country = '';
+  
+  if (tz.includes('Kolkata')) { flag = '🇮🇳'; country = 'India'; }
+  else if (tz.includes('Dubai') || tz.includes('Abu_Dhabi')) { flag = '🇦🇪'; country = 'UAE'; }
+  else if (tz.includes('London')) { flag = '🇬🇧'; country = 'UK'; }
+  else if (tz.includes('New_York') || tz.includes('Chicago') || tz.includes('Los_Angeles')) { flag = '🇺🇸'; country = 'USA'; }
+  else if (tz.includes('Singapore')) { flag = '🇸🇬'; country = 'Singapore'; }
+  else if (tz.includes('Sydney')) { flag = '🇦🇺'; country = 'Australia'; }
+  
+  return { gmt, flag, country };
+};
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('wa_token') || null);
@@ -19,6 +46,9 @@ function App() {
   const [isLinked, setIsLinked] = useState(false);
   const [qrCodeData, setQrCodeData] = useState('');
   const [userPhone, setUserPhone] = useState(null);
+
+  // Notifications State
+  const [notifications, setNotifications] = useState([]);
 
   // Setup Socket.io connection for real-time updates
   useEffect(() => {
@@ -39,6 +69,16 @@ function App() {
         setIsLinked(data.isConnected);
         setQrCodeData(data.currentQR);
         setUserPhone(data.phone);
+      });
+
+      socket.on('notification', (data) => {
+        console.log('New notification received:', data);
+        const id = Date.now();
+        setNotifications(prev => [...prev, { ...data, id }]);
+        // Auto remove after 5 seconds
+        setTimeout(() => {
+          setNotifications(prev => prev.filter(n => n.id !== id));
+        }, 5000);
       });
 
       socket.on('connect_error', (err) => {
@@ -82,11 +122,28 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* Notifications Portal */}
+      <div className="notifications-container">
+        {notifications.map(n => (
+          <div key={n.id} className={`notification-toast ${n.type}`}>
+            <div className="notification-icon">
+              {n.type === 'success' && <CheckCircle2 size={20} className="text-success" />}
+              {n.type === 'error' && <XCircle size={20} className="text-danger" />}
+              {n.type === 'warning' && <AlertTriangle size={20} className="text-warning" />}
+            </div>
+            <div className="notification-content">
+              <div className="notification-title">{n.type.toUpperCase()}</div>
+              <div className="notification-message">{n.message}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Sidebar */}
       <div className="sidebar">
         <div className="sidebar-logo">
-          <div className="sidebar-logo-icon">
-            <MessageCircle size={24} />
+          <div className="sidebar-logo-icon" style={{ background: '#25D366', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', padding: '6px' }}>
+            <MessageCircle size={24} fill="currentColor" />
           </div>
           WA Reach
         </div>
@@ -135,8 +192,15 @@ function App() {
       {/* Main Content */}
       <div className="main-wrapper">
         <div className="header">
-          <div className="header-title">
-            {activeTab === 'dashboard' && 'Dashboard Overview'}
+          <div className="header-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {activeTab === 'dashboard' && (
+              <>
+                Dashboard Overview
+                <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--text-muted)', background: 'var(--bg-color)', padding: '4px 10px', borderRadius: '20px', marginLeft: '12px' }}>
+                  {getTimezoneInfo().gmt} {getTimezoneInfo().flag} {getTimezoneInfo().country}
+                </span>
+              </>
+            )}
             {activeTab === 'automations' && 'Manage Automations'}
             {activeTab === 'logs' && 'Message Logs'}
             {activeTab === 'settings' && 'User Settings'}
@@ -234,11 +298,14 @@ function AuthView({ setToken }) {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <div className="sidebar-logo-icon" style={{ background: 'var(--primary)', color: 'white', display: 'inline-flex', padding: 8, borderRadius: 12, marginBottom: 16 }}>
-            <MessageCircle size={24} />
+          <div className="auth-logo-text">
+            <div className="sidebar-logo-icon" style={{ background: '#25D366', color: 'white', display: 'inline-flex', padding: 8, borderRadius: 12 }}>
+              <MessageCircle size={24} fill="currentColor" />
+            </div>
+            WA Reach
           </div>
-          <h2>{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
-          <p>Sign in to manage your WA Reach automations.</p>
+          <h2>{isLogin ? 'Welcome Back' : 'Get Started'}</h2>
+          <p>{isLogin ? 'Enter your credentials to access your account.' : 'Create an account to start automating your WhatsApp.'}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="auth-form">
@@ -251,7 +318,7 @@ function AuthView({ setToken }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
-              placeholder="admin"
+              placeholder="Enter username"
             />
           </div>
           <div className="form-group">
@@ -265,15 +332,15 @@ function AuthView({ setToken }) {
             />
           </div>
 
-          <button type="submit" className="btn-primary auth-submit">
-            {isLogin ? 'Log In' : 'Sign Up'}
+          <button type="submit" className="btn-primary auth-submit" style={{ padding: '14px', fontSize: '16px' }}>
+            {isLogin ? 'Log In to WA Reach' : 'Create Account'}
           </button>
         </form>
 
         <div className="auth-footer">
-          {isLogin ? "Don't have an account? " : "Already have an account? "}
+          {isLogin ? "New to WA Reach? " : "Already have an account? "}
           <span onClick={() => setIsLogin(!isLogin)} className="text-primary auth-link">
-            {isLogin ? 'Sign up' : 'Log in'}
+            {isLogin ? 'Create Account' : 'Sign in instead'}
           </span>
         </div>
       </div>
@@ -285,25 +352,45 @@ function AuthView({ setToken }) {
 
 function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
   const [stats, setStats] = useState({ sent: 0, failed: 0, activeAutomations: 0 });
+  const [graphData, setGraphData] = useState([]);
   const [recentAutomations, setRecentAutomations] = useState([]);
   const [recentLogs, setRecentLogs] = useState([]);
 
   useEffect(() => {
-    fetch(`${API_URL}/dashboard/stats`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(res => res.json()).then(data => setStats(prev => ({ ...prev, ...data }))).catch();
+    const fetchSafe = (url, setter) => {
+      fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(res => {
+          if (!res.ok) throw new Error('Network response was not ok');
+          return res.json();
+        })
+        .then(data => setter(data))
+        .catch(err => console.error(`Fetch error for ${url}:`, err));
+    };
 
-    fetch(`${API_URL}/automations`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(res => res.json()).then(data => setRecentAutomations(data.slice(0, 3))).catch();
-
-    fetch(`${API_URL}/logs?limit=4`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(res => res.json()).then(data => setRecentLogs(data.data)).catch();
+    fetchSafe(`${API_URL}/dashboard/stats`, data => setStats(prev => ({ ...prev, ...data })));
+    fetchSafe(`${API_URL}/dashboard/graph-data`, setGraphData);
+    fetchSafe(`${API_URL}/automations`, data => setRecentAutomations((data || []).slice(0, 3)));
+    fetchSafe(`${API_URL}/logs?limit=4`, data => setRecentLogs(data ? (data.data || []) : []));
   }, [token]);
+
+  // Custom tool tip for the wave graph
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div style={{ background: '#fff', padding: '10px', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+          <p style={{ fontWeight: 600, color: '#1e293b', marginBottom: '4px' }}>{label}</p>
+          <p style={{ color: '#25D366' }}>Sent: {payload[0].value} messages</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div className="view-container">
       
       {/* Session Status Banner */}
-      <div style={{ display: 'flex', alignItems: 'center', background: '#fff', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '24px', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', background: '#fff', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '8px', justifyContent: 'space-between' }}>
          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
              <MessageCircle size={28} color={isLinked ? 'var(--primary)' : '#94a3b8'} />
              <div>
@@ -333,6 +420,75 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
         <div className="stat-box">
           <span className="stat-title">Active Automations</span>
           <span className="stat-value text-main">{stats.activeAutomations}</span>
+        </div>
+      </div>
+
+      {/* Wave Graph Implementation */}
+      <div className="graph-container">
+        <div className="graph-header">
+           <div className="graph-title">Message Activity (Last 24h)</div>
+           <div className="graph-legend">
+              <div className="legend-item">
+                 <div className="legend-color" style={{ background: 'rgba(37, 211, 102, 0.2)' }}></div>
+                 <span>Activity</span>
+              </div>
+              <div className="legend-item">
+                 <div className="legend-color" style={{ background: 'rgba(30, 41, 59, 0.05)' }}></div>
+                 <span>Night Hours (8PM-6AM)</span>
+              </div>
+           </div>
+        </div>
+        <div style={{ width: '100%', height: 300 }}>
+          <ResponsiveContainer>
+            <AreaChart data={graphData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#25D366" stopOpacity={0.4}/>
+                  <stop offset="95%" stopColor="#25D366" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis 
+                dataKey="time" 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fontSize: 12, fill: '#64748b' }}
+                interval={3}
+              />
+              <YAxis 
+                axisLine={false} 
+                tickLine={false} 
+                tick={{ fontSize: 12, fill: '#64748b' }}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              
+              {/* Highlight Night Hours */}
+              {graphData.map((d, index) => {
+                if (d.isNight) {
+                   return (
+                     <ReferenceArea 
+                       key={index}
+                       x1={d.time} 
+                       x2={graphData[index+1]?.time || d.time} 
+                       fill="rgba(30, 41, 59, 0.04)"
+                       strokeOpacity={0}
+                     />
+                   )
+                }
+                return null;
+              })}
+
+              <Area 
+                type="monotone" 
+                dataKey="count" 
+                stroke="#25D366" 
+                strokeWidth={3}
+                fillOpacity={1} 
+                fill="url(#colorCount)" 
+                animationDuration={1500}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
@@ -386,6 +542,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
     </div>
   );
 }
+
 
 function AutomationsView({ token }) {
   const [automations, setAutomations] = useState([]);
@@ -566,6 +723,12 @@ function AutomationsView({ token }) {
                 <div>
                   <span className="lbl">Queue size:</span> {task.count}
                 </div>
+                {task.timezone_offset !== undefined && (
+                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                    <Clock size={10} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+                    Timezone: GMT{task.timezone_offset <= 0 ? '+' : '-'}{Math.floor(Math.abs(task.timezone_offset)/60)}:{String(Math.abs(task.timezone_offset)%60).padStart(2, '0')}
+                  </div>
+                )}
               </div>
               <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
                 <button className="btn-outline" style={{ flex: 1, color: task.status === 'Active' ? 'var(--danger)' : 'var(--primary)', borderColor: task.status === 'Active' ? 'var(--danger)' : 'var(--primary)' }} onClick={() => handleToggle(task.id)}>
@@ -716,36 +879,75 @@ function AutomationsView({ token }) {
 function LogsView({ token }) {
   const [page, setPage] = useState(1);
   const [logs, setLogs] = useState([]);
-  const [pagination, setPagination] = useState({ total: 0, totalPages: 1, limit: 10 });
+  const [pagination, setPagination] = useState({ total: 0, totalPages: 1, limit: 15 });
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('delivered');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/logs?page=${page}&limit=10`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(res => res.json())
-      .then(data => {
-        setLogs(data.data);
-        setPagination(data.pagination);
+    setLoading(true);
+    fetch(`${API_URL}/logs?page=${page}&limit=${pagination.limit}&status=${statusFilter}`, { 
+      headers: { 'Authorization': `Bearer ${token}` } 
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Network response was not ok');
+        return res.json();
       })
-      .catch();
-  }, [page, token]);
+      .then(data => {
+        if (!data) return;
+        if (page === 1) {
+          setLogs(data.data || []);
+        } else {
+          setLogs(prev => [...prev, ...(data.data || [])]);
+        }
+        setPagination(data.pagination || { total: 0, totalPages: 1, limit: 15 });
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Logs fetch error:', err);
+        setLoading(false);
+      });
+  }, [page, statusFilter, token]);
+
+  const handleFilterChange = (status) => {
+    setStatusFilter(status);
+    setPage(1);
+    setLogs([]);
+  };
 
   const currentData = logs.filter(log => (log.contact || '').toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="view-container">
-      <div className="card full-width" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div className="card-header">
+      <div className="card full-width" style={{ display: 'flex', flexDirection: 'column', minHeight: '500px' }}>
+        <div className="card-header" style={{ flexWrap: 'wrap', gap: '16px' }}>
           <div className="card-title-group">
             <h3>Messaging Activity</h3>
             <p className="card-desc">Detailed logs of all inbound and outbound messages.</p>
           </div>
-          <div className="search-box">
-            <Search size={16} />
-            <input type="text" placeholder="Search phone number..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div className="filter-box">
+               <select 
+                 value={statusFilter} 
+                 onChange={(e) => handleFilterChange(e.target.value)}
+                 style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', fontSize: '14px', background: '#fff' }}
+               >
+                 <option value="all">All Status</option>
+                 <option value="delivered">Delivered</option>
+                 <option value="failed">Failed</option>
+                 <option value="pending">Pending</option>
+               </select>
+            </div>
+
+            <div className="search-box" style={{ margin: 0 }}>
+              <Search size={16} />
+              <input type="text" placeholder="Search phone..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
           </div>
         </div>
 
-        <div style={{ flexGrow: 1 }}>
+        <div style={{ flexGrow: 1, overflowX: 'auto' }}>
           <table className="logs-table">
             <thead>
               <tr>
@@ -756,9 +958,11 @@ function LogsView({ token }) {
               </tr>
             </thead>
             <tbody>
-              {currentData.length === 0 ? <tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8' }}>No logs found.</td></tr> : null}
-              {currentData.map(log => (
-                <tr key={log.id}>
+              {currentData.length === 0 && !loading ? (
+                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No logs found.</td></tr>
+              ) : null}
+              {currentData.map((log, idx) => (
+                <tr key={`${log.id}-${idx}`}>
                   <td className="log-contact">{log.contact}</td>
                   <td className="log-flow">{log.workflow || 'Manual API'}</td>
                   <td>
@@ -774,26 +978,22 @@ function LogsView({ token }) {
           </table>
         </div>
 
-        {/* Pagination Controls */}
-        <div className="pagination">
-          <span className="page-info">Showing {logs.length} entries (Page {page} of {pagination.totalPages || 1})</span>
-          <div className="page-actions">
-            <button
-              className="btn-outline btn-sm"
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page === 1}
+        {/* Load More Control */}
+        {pagination.page < pagination.totalPages && (
+          <div style={{ padding: '24px', textAlign: 'center', borderTop: '1px solid var(--border-color)' }}>
+            <button 
+              className="btn-outline" 
+              onClick={() => setPage(p => p + 1)} 
+              disabled={loading}
+              style={{ padding: '10px 32px' }}
             >
-              <ChevronLeft size={16} /> Previous
-            </button>
-            <span className="page-number">{page} / {pagination.totalPages || 1}</span>
-            <button
-              className="btn-outline btn-sm"
-              onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
-              disabled={page >= pagination.totalPages}
-            >
-              Next <ChevronRight size={16} />
+              {loading ? 'Loading...' : 'Load More Activity'}
             </button>
           </div>
+        )}
+        
+        <div style={{ padding: '12px 24px', fontSize: '13px', color: '#94a3b8', borderTop: '1px solid var(--border-color)', background: '#f8fafc', borderRadius: '0 0 12px 12px' }}>
+          Showing {currentData.length} of {pagination.total} total logs
         </div>
       </div>
     </div>
@@ -801,9 +1001,11 @@ function LogsView({ token }) {
 }
 
 function SettingsView({ token }) {
+  const [activeTab, setActiveTab] = useState('account');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [msg, setMsg] = useState({ text: '', type: '' });
+  const [notifLogs, setNotifLogs] = useState([]);
 
   useEffect(() => {
      fetch(`${API_URL}/settings`, { headers: { 'Authorization': `Bearer ${token}` } })
@@ -812,6 +1014,11 @@ function SettingsView({ token }) {
            if(d.email) setEmail(d.email);
            if(d.personal_whatsapp_number) setPhone(d.personal_whatsapp_number);
         }).catch(console.error);
+
+     fetch(`${API_URL}/notifications/logs`, { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(d => setNotifLogs(Array.isArray(d) ? d : []))
+        .catch(console.error);
   }, [token]);
 
   const handleSave = async (e) => {
@@ -838,45 +1045,113 @@ function SettingsView({ token }) {
 
   return (
     <div className="view-container">
-       <div className="card" style={{ maxWidth: '600px', margin: '0 auto' }}>
-          <div className="card-header">
-             <div className="card-title-group">
-                <h3>Account Settings</h3>
-                <p className="card-desc">Update your personal preferences and contact details.</p>
+       <div className="card" style={{ maxWidth: '800px', width: '100%', margin: '0 auto' }}>
+          <div className="card-header" style={{ display: 'block', paddingBottom: 0 }}>
+             {/* Tabs Navigation */}
+             <div style={{ display: 'flex', gap: '24px', borderBottom: '1px solid var(--border-color)' }}>
+                <button 
+                  onClick={() => setActiveTab('account')}
+                  style={{ 
+                    padding: '8px 4px 12px', 
+                    border: 'none', 
+                    background: 'none', 
+                    color: activeTab === 'account' ? '#25d366' : '#64748b', 
+                    borderBottom: activeTab === 'account' ? '2px solid #25d366' : '2px solid transparent',
+                    fontWeight: activeTab === 'account' ? '600' : '500', 
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Account Settings
+                </button>
+                <button 
+                  onClick={() => setActiveTab('logs')}
+                  style={{ 
+                    padding: '8px 4px 12px', 
+                    border: 'none', 
+                    background: 'none', 
+                    color: activeTab === 'logs' ? '#25d366' : '#64748b', 
+                    borderBottom: activeTab === 'logs' ? '2px solid #25d366' : '2px solid transparent',
+                    fontWeight: activeTab === 'logs' ? '600' : '500', 
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Notification Log
+                </button>
              </div>
            </div>
-           <form style={{ padding: '24px' }} onSubmit={handleSave}>
-             {msg.text && (
-                <div style={{ padding: '12px', background: msg.type==='success'?'#dcfce7':'#fee2e2', color: msg.type==='success'?'#15803d':'#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
-                   {msg.text}
-                </div>
-             )}
 
-             {/* Notification info banner */}
-             <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-               <span style={{ fontSize: '18px', lineHeight: 1 }}>🔔</span>
-               <div style={{ fontSize: '13px', color: '#0369a1' }}>
-                 <strong>Notification Settings</strong><br />
-                 The details below are used to send you <strong>daily campaign summary reports</strong> via WhatsApp — including total messages sent, failed deliveries, and campaign timings — once each automation finishes for the day.
+           {activeTab === 'account' ? (
+             <form style={{ padding: '24px' }} onSubmit={handleSave}>
+               {msg.text && (
+                  <div style={{ padding: '12px', background: msg.type==='success'?'#dcfce7':'#fee2e2', color: msg.type==='success'?'#15803d':'#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
+                     {msg.text}
+                  </div>
+               )}
+
+               <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                 <span style={{ fontSize: '18px', lineHeight: 1 }}>🔔</span>
+                 <div style={{ fontSize: '13px', color: '#0369a1' }}>
+                   <strong>System Alerts</strong><br />
+                   Configure where you receive daily startup alerts and campaign summaries.
+                 </div>
                </div>
-             </div>
 
-             <div className="form-group">
-                <label>Email Address</label>
-                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
-                <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Reserved for future email notifications. Optional.</p>
-             </div>
-             
-             <div className="form-group" style={{ marginTop: '16px' }}>
-                <label>Personal WhatsApp Number</label>
-                <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 15551234567" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
-                <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Enter your number with country code but <strong>without</strong> the +. E.g. for +91 98765 43210 enter <code>919876543210</code>. Daily campaign summaries will be sent here once all messages are dispatched.</p>
-             </div>
+               <div className="form-group">
+                  <label>Email Address</label>
+                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
+                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Used for system notifications and summaries.</p>
+               </div>
+               
+               <div className="form-group" style={{ marginTop: '16px' }}>
+                  <label>Personal WhatsApp Number</label>
+                  <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 919876543210" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
+                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Include country code (e.g. 91xxxxxxxxxx).</p>
+               </div>
 
-             <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
-                <button type="submit" className="btn-primary">Save Settings</button>
+               <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" className="btn-primary">Save Changes</button>
+               </div>
+             </form>
+           ) : (
+             <div style={{ padding: '24px', overflowX: 'auto' }}>
+                <table className="logs-table">
+                   <thead>
+                      <tr>
+                         <th>Type</th>
+                         <th>Event</th>
+                         <th>Recipient</th>
+                         <th>Time</th>
+                         <th>Status</th>
+                      </tr>
+                   </thead>
+                   <tbody>
+                      {notifLogs.length === 0 ? (
+                         <tr><td colSpan={5} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No notification history yet.</td></tr>
+                      ) : (
+                         notifLogs.map(log => (
+                            <tr key={log.id}>
+                               <td style={{ textTransform: 'capitalize' }}>{log.type}</td>
+                               <td style={{ fontSize: '13px' }}>
+                                  {log.category === 'start_alert' ? '🚀 Startup Alert' : '🏁 Daily Summary'}
+                               </td>
+                               <td style={{ fontSize: '12px', color: '#64748b' }}>{log.recipient}</td>
+                               <td style={{ fontSize: '12px' }}>{new Date(log.sent_at).toLocaleString()}</td>
+                               <td>
+                                  <span className={`badge badge-${log.status}`}>
+                                     {log.status}
+                                  </span>
+                               </td>
+                            </tr>
+                         ))
+                      )}
+                   </tbody>
+                </table>
              </div>
-          </form>
+           )}
        </div>
     </div>
   );

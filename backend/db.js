@@ -81,11 +81,15 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
                 status TEXT DEFAULT 'Active',
                 active_days TEXT DEFAULT '[1,2,3,4,5]',
                 last_summary_sent_date TEXT,
+                last_start_notified_date TEXT,
+                timezone_offset INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )`);
             db.run(`ALTER TABLE automations ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1`, (err) => {});
             db.run(`ALTER TABLE automations ADD COLUMN last_summary_sent_date TEXT`, (err) => {});
+            db.run(`ALTER TABLE automations ADD COLUMN last_start_notified_date TEXT`, (err) => {});
+            db.run(`ALTER TABLE automations ADD COLUMN timezone_offset INTEGER DEFAULT 0`, (err) => {});
 
             // Create Automation Logs table
             db.run(`CREATE TABLE IF NOT EXISTS automation_logs (
@@ -97,6 +101,19 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
                 sent_time DATETIME,
                 FOREIGN KEY (automation_id) REFERENCES automations(id),
                 FOREIGN KEY (contact_id) REFERENCES contacts(id)
+            )`);
+
+            // Create Notification Logs table
+            db.run(`CREATE TABLE IF NOT EXISTS notification_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                category TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                content TEXT,
+                status TEXT NOT NULL,
+                sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             )`);
         });
     }

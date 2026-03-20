@@ -1,6 +1,15 @@
 const cron = require('node-cron');
 const db = require('./db');
-const { sendMessage } = require('./whatsapp');
+const { sendMessage, notifyUser } = require('./whatsapp');
+const { sendEmail } = require('./email');
+
+// Helper to log system notifications
+async function logNotification(userId, type, category, recipient, content, status) {
+    db.run(
+        `INSERT INTO notification_logs (user_id, type, category, recipient, content, status) VALUES (?, ?, ?, ?, ?, ?)`,
+        [userId, type, category, recipient, content, status]
+    );
+}
 
 // Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -103,80 +112,144 @@ cron.schedule('* * * * *', () => {
             const logReason = overallSuccess ? null : 'Failed to reach WhatsApp client or failure in dispatch sequence';
             db.run(`UPDATE automation_logs SET status = ?, error_reason = ? WHERE id = ?`, [newStatus, logReason, log_id]);
 
-            // Reschedule for tomorrow if the automation is still active and it sent successfully
-            if (auto_status === 'Active' && overallSuccess) {
-                let daysArray;
-                try {
-                    daysArray = JSON.parse(active_days) || [0,1,2,3,4,5,6];
-                } catch(e) {
-                    daysArray = [0,1,2,3,4,5,6];
-                }
+            // Reschedule for tomorrow if the automation is still active
+            if (auto_status === 'Active') {
+                db.get(`SELECT start_time, end_time, active_days, timezone_offset FROM automations WHERE id = ?`, [automation_id], (errAuto, autoDetails) => {
+                    if (errAuto || !autoDetails) return;
 
-                const oldDate = new Date(sent_time);
-                oldDate.setDate(oldDate.getDate() + 1);
+                    let daysArray;
+                    try {
+                        daysArray = JSON.parse(autoDetails.active_days) || [0,1,2,3,4,5,6];
+                    } catch(e) {
+                        daysArray = [0,1,2,3,4,5,6];
+                    }
 
-                while (!daysArray.includes(oldDate.getDay())) {
-                    oldDate.setDate(oldDate.getDate() + 1);
-                }
+                    const offsetMins = autoDetails.timezone_offset || 0;
+                    const [startH, startM] = autoDetails.start_time.split(':').map(Number);
+                    const [endH, endM] = autoDetails.end_time.split(':').map(Number);
 
-                const jitterMs = (Math.random() * 20 - 10) * 60 * 1000;
-                const nextSchedule = new Date(oldDate.getTime() + jitterMs);
+                    // Move to the next day in the user's timezone
+                    const oldDateUTC = new Date(sent_time);
+                    let clientNextDate = new Date(oldDateUTC.getTime() - (offsetMins * 60000));
+                    clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
+                    clientNextDate.setUTCHours(startH, startM, 0, 0);
 
-                db.run(
-                    `INSERT INTO automation_logs (automation_id, contact_id, status, sent_time) VALUES (?, ?, 'pending', ?)`, 
-                    [automation_id, contact_id, nextSchedule.toISOString()]
-                );
+                    while (!daysArray.includes(clientNextDate.getDay())) {
+                        clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
+                    }
+
+                    // Calculate jitter within the window
+                    let startTotalMins = startH * 60 + startM;
+                    let endTotalMins = endH * 60 + endM;
+                    if (endTotalMins <= startTotalMins) endTotalMins += 24 * 60;
+                    const windowSizeMins = endTotalMins - startTotalMins;
+                    
+                    const randomOffsetMins = Math.random() * windowSizeMins;
+                    const nextScheduleClient = new Date(clientNextDate.getTime() + (randomOffsetMins * 60 * 1000));
+                    const nextScheduleUTC = new Date(nextScheduleClient.getTime() + (offsetMins * 60000));
+
+                    db.run(
+                        `INSERT INTO automation_logs (automation_id, contact_id, status, sent_time) VALUES (?, ?, 'pending', ?)`, 
+                        [automation_id, contact_id, nextScheduleUTC.toISOString()]
+                    );
+                });
             }
         }
     });
 
-    // --- Daily Campaign Summaries ---
-    // Runs every minute, but we'll check against last_summary_sent_date
+    // --- Daily Campaign Notifications & Summaries ---
+    // We check this every minute to see if we should send a START alert or END summary
     db.all(`
-        SELECT a.id, a.user_id, a.name, a.last_summary_sent_date, u.personal_whatsapp_number
+        SELECT a.id, a.user_id, a.name, a.last_summary_sent_date, a.last_start_notified_date,
+               a.start_time, a.end_time, a.timezone_offset, u.personal_whatsapp_number, u.email as user_email
         FROM automations a
         JOIN users u ON a.user_id = u.id
-        WHERE a.status = 'Active' AND u.personal_whatsapp_number IS NOT NULL AND u.personal_whatsapp_number != ''
+        WHERE a.status = 'Active' AND (u.personal_whatsapp_number IS NOT NULL OR u.email IS NOT NULL)
     `, async (err, automations) => {
-        if (err) return console.error('Error querying for summaries:', err);
+        if (err) return console.error('Error querying for notifications:', err);
         
-        const todayStr = new Date().toISOString().split('T')[0];
-
         for (const auto of automations) {
-            // Already sent today
-            if (auto.last_summary_sent_date === todayStr) continue;
+            const offsetMins = auto.timezone_offset || 0;
+            // Key Fix: Calculate "today" based on the user's local timezone
+            const todayStr = new Date(Date.now() - (offsetMins * 60000)).toISOString().split('T')[0];
 
-            // Stats for today (start of day to end of day)
-            const todayStart = todayStr + 'T00:00:00.000Z';
-            const todayEnd = todayStr + 'T23:59:59.999Z';
+            // Stats for today in UTC range matching local day
+            const localStart = new Date(todayStr + 'T00:00:00.000Z');
+            const localEnd = new Date(todayStr + 'T23:59:59.999Z');
+            const utcStartRange = new Date(localStart.getTime() + (offsetMins * 60000)).toISOString();
+            const utcEndRange = new Date(localEnd.getTime() + (offsetMins * 60000)).toISOString();
             
             db.get(`
                 SELECT 
                     SUM(CASE WHEN status IN ('delivered', 'read', 'sent') THEN 1 ELSE 0 END) as sentCount,
                     SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failedCount,
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingTodayCount,
-                    MIN(sent_time) as startTime,
-                    MAX(sent_time) as endTime
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingCount,
+                    MIN(sent_time) as firstSentTime
                 FROM automation_logs 
                 WHERE automation_id = ? AND sent_time >= ? AND sent_time <= ?
-            `, [auto.id, todayStart, todayEnd], async (err3, stats) => {
+            `, [auto.id, utcStartRange, utcEndRange], async (err3, stats) => {
                 if (err3 || !stats) return;
 
+                const pendingCount = stats.pendingCount || 0;
                 const processedCount = (stats.sentCount || 0) + (stats.failedCount || 0);
-                const pendingCount = stats.pendingTodayCount || 0;
                 
-                // Only send summary if:
-                // 1. We have actually processed at least one message today
-                // 2. There are NO messages left to send for the rest of today
-                if (processedCount > 0 && pendingCount === 0) {
-                    // Prevent duplicate sends by updating db right away
-                    db.run(`UPDATE automations SET last_summary_sent_date = ? WHERE id = ?`, [todayStr, auto.id], async (updateErr) => {
-                        if (!updateErr) {
-                            // Send summary to their personal number
-                            const summaryMsg = `*Daily Summary: ${auto.name}*\n\n✅ Sent: ${stats.sentCount || 0}\n❌ Failed: ${stats.failedCount || 0}\n\nStarted: ${new Date(stats.startTime).toLocaleTimeString()}\nEnded: ${new Date(stats.endTime).toLocaleTimeString()}`;
-                            
-                            await sendMessage(auto.user_id, auto.personal_whatsapp_number, summaryMsg);
+                // 1. --- START NOTIFICATION ---
+                if (pendingCount > 0 && auto.last_start_notified_date !== todayStr) {
+                    const firstMsgTimeUTC = new Date(stats.firstSentTime);
+                    const nowUTC = new Date();
+                    
+                    // If the first message is scheduled for today and is due soon or already started
+                    if (firstMsgTimeUTC <= nowUTC || (firstMsgTimeUTC.getTime() - nowUTC.getTime()) < 3600000) {
+                        db.run(`UPDATE automations SET last_start_notified_date = ? WHERE id = ?`, [todayStr, auto.id], async (updateErr) => {
+                            if (!updateErr) {
+                                const startMsg = `🚀 *Automation Starting: ${auto.name}*\n\n🕒 *Window:* ${auto.start_time} - ${auto.end_time}\n📱 *Contact Count:* ${processedCount + pendingCount}\n\nI will send you a summary once all messages are dispatched.`;
+                                
+                                // WhatsApp
+                                if (auto.personal_whatsapp_number) {
+                                    const waSuccess = await sendMessage(auto.user_id, auto.personal_whatsapp_number, startMsg);
+                                    logNotification(auto.user_id, 'whatsapp', 'start_alert', auto.personal_whatsapp_number, startMsg, waSuccess ? 'sent' : 'failed');
+                                }
+                                
+                                // Email
+                                if (auto.user_email) {
+                                    const emailSuccess = await sendEmail(auto.user_email, `🚀 Automation Starting: ${auto.name}`, startMsg);
+                                    logNotification(auto.user_id, 'email', 'start_alert', auto.user_email, startMsg, emailSuccess ? 'sent' : 'failed');
+                                }
+
+                                notifyUser(auto.user_id, 'info', `Started automation "${auto.name}"`);
+                            }
+                        });
+                    }
+                }
+
+                // 2. --- END SUMMARY ---
+                if (processedCount > 0 && pendingCount === 0 && auto.last_summary_sent_date !== todayStr) {
+                    // Find when the NEXT one is scheduled
+                    db.get(`SELECT MIN(sent_time) as nextRun FROM automation_logs WHERE automation_id = ? AND status = 'pending'`, [auto.id], async (errNext, nextData) => {
+                        let nextRunStr = "Not scheduled";
+                        if (!errNext && nextData && nextData.nextRun) {
+                            nextRunStr = new Date(nextData.nextRun).toLocaleString();
                         }
+
+                        db.run(`UPDATE automations SET last_summary_sent_date = ? WHERE id = ?`, [todayStr, auto.id], async (updateErr) => {
+                            if (!updateErr) {
+                                const summaryMsg = `🏁 *Daily Summary: ${auto.name}*\n\n✅ Sent: ${stats.sentCount || 0}\n❌ Failed: ${stats.failedCount || 0}\n⏱️ Window: ${auto.start_time} to ${auto.end_time}\n\n📅 *Next Run:* ${nextRunStr}`;
+                                
+                                // WhatsApp
+                                if (auto.personal_whatsapp_number) {
+                                    const waSuccess = await sendMessage(auto.user_id, auto.personal_whatsapp_number, summaryMsg);
+                                    logNotification(auto.user_id, 'whatsapp', 'daily_summary', auto.personal_whatsapp_number, summaryMsg, waSuccess ? 'sent' : 'failed');
+                                }
+                                
+                                // Email
+                                if (auto.user_email) {
+                                    const emailSuccess = await sendEmail(auto.user_email, `🏁 Daily Summary: ${auto.name}`, summaryMsg);
+                                    logNotification(auto.user_id, 'email', 'daily_summary', auto.user_email, summaryMsg, emailSuccess ? 'sent' : 'failed');
+                                }
+
+                                notifyUser(auto.user_id, 'success', `Sent summary for "${auto.name}"`);
+                            }
+                        });
                     });
                 }
             });

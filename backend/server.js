@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -134,6 +135,13 @@ app.put('/api/settings', authenticateToken, (req, res) => {
     });
 });
 
+app.get('/api/notifications/logs', authenticateToken, (req, res) => {
+    db.all('SELECT * FROM notification_logs WHERE user_id = ? ORDER BY sent_at DESC LIMIT 50', [req.user.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
 // --- API Endpoints ---
 app.get('/api/wa/status', authenticateToken, (req, res) => {
     const status = whatsappClient.getStatus(req.user.id);
@@ -222,9 +230,49 @@ app.get('/api/dashboard/stats', authenticateToken, (req, res) => {
 
             db.get(`SELECT COUNT(*) as count FROM automations WHERE user_id = ? AND status = 'Active'`, [req.user.id], (err3, row3) => {
                 if (!err3 && row3) stats.activeAutomations = row3.count;
-                res.json(stats);
+                            res.json(stats);
             });
         });
+    });
+});
+
+app.get('/api/dashboard/graph-data', authenticateToken, (req, res) => {
+    // Return counts for the last 24 hours grouped by hour
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+    const query = `
+        SELECT strftime('%H:00', sent_time) as hour, COUNT(*) as count, sent_time
+        FROM automation_logs al
+        JOIN automations a ON al.automation_id = a.id
+        WHERE a.user_id = ? AND al.status IN ('delivered', 'read', 'sent') AND al.sent_time >= ?
+        GROUP BY strftime('%Y-%m-%d %H:00:00', sent_time)
+        ORDER BY sent_time ASC
+    `;
+
+    db.all(query, [req.user.id, twentyFourHoursAgo], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Fill in missing hours with 0
+        const result = [];
+        for (let i = 0; i < 24; i++) {
+            const date = new Date(now.getTime() - (23 - i) * 60 * 60 * 1000);
+            const hour = date.getHours();
+            const hourLabel = hour.toString().padStart(2, '0') + ':00';
+            
+            // Re-matching logic: find if we have an entry for this specific hour in the last 24h
+            const found = rows.find(r => {
+                const rDate = new Date(r.sent_time);
+                return rDate.getHours() === hour && (now - rDate) <= 24 * 60 * 60 * 1000;
+            });
+
+            result.push({
+                time: hourLabel,
+                count: found ? found.count : 0,
+                isNight: hour >= 20 || hour <= 6
+            });
+        }
+        res.json(result);
     });
 });
 
@@ -232,9 +280,18 @@ app.get('/api/logs', authenticateToken, (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
+    const status = req.query.status;
 
-    const countQuery = `SELECT COUNT(*) as total FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE a.user_id = ?`;
-    db.get(countQuery, [req.user.id], (err, countRow) => {
+    let whereClause = `a.user_id = ?`;
+    let queryParams = [req.user.id];
+
+    if (status && status !== 'all') {
+        whereClause += ` AND al.status = ?`;
+        queryParams.push(status);
+    }
+
+    const countQuery = `SELECT COUNT(*) as total FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE ${whereClause}`;
+    db.get(countQuery, queryParams, (err, countRow) => {
         if (err) return res.status(500).json({ error: err.message });
 
         const total = countRow.total;
@@ -244,12 +301,13 @@ app.get('/api/logs', authenticateToken, (req, res) => {
             FROM automation_logs al
             LEFT JOIN contacts c ON al.contact_id = c.id
             LEFT JOIN automations a ON al.automation_id = a.id
-            WHERE a.user_id = ?
+            WHERE ${whereClause}
             ORDER BY al.id DESC
             LIMIT ? OFFSET ?
         `;
 
-        db.all(dataQuery, [req.user.id, limit, offset], (err2, rows) => {
+        const allParams = [...queryParams, limit, offset];
+        db.all(dataQuery, allParams, (err2, rows) => {
             if (err2) return res.status(500).json({ error: err2.message });
             res.json({
                 data: rows,
@@ -293,8 +351,8 @@ app.post('/api/automations', authenticateToken, (req, res) => {
         msgTemplateStr = JSON.stringify(msgTemplateStr);
     }
 
-    db.run(`INSERT INTO automations (user_id, name, start_time, end_time, message_template, status, active_days) VALUES (?, ?, ?, ?, ?, 'Active', ?)`,
-        [userId, name, start_time, end_time, msgTemplateStr, daysJson],
+    db.run(`INSERT INTO automations (user_id, name, start_time, end_time, message_template, status, active_days, timezone_offset) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?)`,
+        [userId, name, start_time, end_time, msgTemplateStr, daysJson, offsetMins],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
 
@@ -423,8 +481,8 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
             msgTemplateStr = JSON.stringify(msgTemplateStr);
         }
 
-        db.run(`UPDATE automations SET name = ?, start_time = ?, end_time = ?, message_template = ?, active_days = ? WHERE id = ? AND user_id = ?`,
-            [name, start_time, end_time, msgTemplateStr, daysJson, id, userId],
+        db.run(`UPDATE automations SET name = ?, start_time = ?, end_time = ?, message_template = ?, active_days = ?, timezone_offset = ? WHERE id = ? AND user_id = ?`,
+            [name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, id, userId],
             function (err) {
                 if (err) return res.status(500).json({ error: err.message });
 
