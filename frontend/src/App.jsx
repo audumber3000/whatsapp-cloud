@@ -370,7 +370,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
     fetchSafe(`${API_URL}/dashboard/stats`, data => setStats(prev => ({ ...prev, ...data })));
     fetchSafe(`${API_URL}/dashboard/graph-data`, setGraphData);
     fetchSafe(`${API_URL}/automations`, data => setRecentAutomations((data || []).slice(0, 3)));
-    fetchSafe(`${API_URL}/logs?limit=4`, data => setRecentLogs(data ? (data.data || []) : []));
+    fetchSafe(`${API_URL}/logs?limit=4&status=delivered,read,sent,failed`, data => setRecentLogs(data ? (data.data || []) : []));
   }, [token]);
 
   // Custom tool tip for the wave graph
@@ -883,6 +883,11 @@ function LogsView({ token }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('delivered');
   const [loading, setLoading] = useState(false);
+  const [expandedLogs, setExpandedLogs] = useState([]);
+
+  const toggleExpand = (id) => {
+    setExpandedLogs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -951,6 +956,7 @@ function LogsView({ token }) {
           <table className="logs-table">
             <thead>
               <tr>
+                <th style={{ width: '40px' }}></th>
                 <th>Contact</th>
                 <th>Workflow</th>
                 <th>Status</th>
@@ -959,21 +965,43 @@ function LogsView({ token }) {
             </thead>
             <tbody>
               {currentData.length === 0 && !loading ? (
-                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No logs found.</td></tr>
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No logs found.</td></tr>
               ) : null}
-              {currentData.map((log, idx) => (
-                <tr key={`${log.id}-${idx}`}>
-                  <td className="log-contact">{log.contact}</td>
-                  <td className="log-flow">{log.workflow || 'Manual API'}</td>
-                  <td>
-                    <span className={`badge badge-${log.status}`}>
-                      {log.status}
-                    </span>
-                    {log.error_reason && <span style={{ display: 'block', fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>{log.error_reason}</span>}
-                  </td>
-                  <td className="log-time">{new Date(log.sent_time).toLocaleString()}</td>
-                </tr>
-              ))}
+              {currentData.map((log, idx) => {
+                const isExpanded = expandedLogs.includes(log.id);
+                return (
+                  <React.Fragment key={`${log.id}-${idx}`}>
+                    <tr onClick={() => log.content && toggleExpand(log.id)} style={{ cursor: log.content ? 'pointer' : 'default' }}>
+                      <td>
+                        {log.content && (
+                          <div style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
+                            <ChevronRight size={16} />
+                          </div>
+                        )}
+                      </td>
+                      <td className="log-contact">{log.contact}</td>
+                      <td className="log-flow">{log.workflow || 'Manual API'}</td>
+                      <td>
+                        <span className={`badge badge-${log.status}`}>
+                          {log.status}
+                        </span>
+                        {log.error_reason && <span style={{ display: 'block', fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>{log.error_reason}</span>}
+                      </td>
+                      <td className="log-time">{new Date(log.sent_time).toLocaleString()}</td>
+                    </tr>
+                    {isExpanded && log.content && (
+                      <tr className="expanded-row">
+                        <td></td>
+                        <td colSpan={4} style={{ padding: '0 16px 16px' }}>
+                          <div style={{ background: '#f1f5f9', padding: '12px', borderRadius: '8px', fontSize: '13px', color: '#1e293b', borderLeft: '4px solid #25d366', whiteSpace: 'pre-wrap' }}>
+                             {log.content}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

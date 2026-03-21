@@ -107,10 +107,11 @@ cron.schedule('* * * * *', () => {
                 }
             }
 
-            // Update the log status
+            // Update the log status and content
             const newStatus = overallSuccess ? 'delivered' : 'failed';
             const logReason = overallSuccess ? null : 'Failed to reach WhatsApp client or failure in dispatch sequence';
-            db.run(`UPDATE automation_logs SET status = ?, error_reason = ? WHERE id = ?`, [newStatus, logReason, log_id]);
+            const sentContent = messageBlocks.map(b => b.variations[0]).join('\n'); // Simplified for logging
+            db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ? WHERE id = ?`, [newStatus, logReason, sentContent, log_id]);
 
             // Reschedule for tomorrow if the automation is still active
             if (auto_status === 'Active') {
@@ -170,10 +171,8 @@ cron.schedule('* * * * *', () => {
         
         for (const auto of automations) {
             const offsetMins = auto.timezone_offset || 0;
-            // Key Fix: Calculate "today" based on the user's local timezone
             const todayStr = new Date(Date.now() - (offsetMins * 60000)).toISOString().split('T')[0];
 
-            // Stats for today in UTC range matching local day
             const localStart = new Date(todayStr + 'T00:00:00.000Z');
             const localEnd = new Date(todayStr + 'T23:59:59.999Z');
             const utcStartRange = new Date(localStart.getTime() + (offsetMins * 60000)).toISOString();
@@ -198,22 +197,27 @@ cron.schedule('* * * * *', () => {
                     const firstMsgTimeUTC = new Date(stats.firstSentTime);
                     const nowUTC = new Date();
                     
-                    // If the first message is scheduled for today and is due soon or already started
                     if (firstMsgTimeUTC <= nowUTC || (firstMsgTimeUTC.getTime() - nowUTC.getTime()) < 3600000) {
                         db.run(`UPDATE automations SET last_start_notified_date = ? WHERE id = ?`, [todayStr, auto.id], async (updateErr) => {
                             if (!updateErr) {
                                 const startMsg = `🚀 *Automation Starting: ${auto.name}*\n\n🕒 *Window:* ${auto.start_time} - ${auto.end_time}\n📱 *Contact Count:* ${processedCount + pendingCount}\n\nI will send you a summary once all messages are dispatched.`;
                                 
-                                // WhatsApp
+                                // WhatsApp (Handle multiple numbers)
                                 if (auto.personal_whatsapp_number) {
-                                    const waSuccess = await sendMessage(auto.user_id, auto.personal_whatsapp_number, startMsg);
-                                    logNotification(auto.user_id, 'whatsapp', 'start_alert', auto.personal_whatsapp_number, startMsg, waSuccess ? 'sent' : 'failed');
+                                    const numbers = auto.personal_whatsapp_number.split(',').map(n => n.trim()).filter(Boolean);
+                                    for (const num of numbers) {
+                                        const waSuccess = await sendMessage(auto.user_id, num, startMsg);
+                                        logNotification(auto.user_id, 'whatsapp', 'start_alert', num, startMsg, waSuccess ? 'sent' : 'failed');
+                                    }
                                 }
                                 
-                                // Email
+                                // Email (Handle multiple emails)
                                 if (auto.user_email) {
-                                    const emailSuccess = await sendEmail(auto.user_email, `🚀 Automation Starting: ${auto.name}`, startMsg);
-                                    logNotification(auto.user_id, 'email', 'start_alert', auto.user_email, startMsg, emailSuccess ? 'sent' : 'failed');
+                                    const emails = auto.user_email.split(',').map(e => e.trim()).filter(Boolean);
+                                    for (const e of emails) {
+                                        const emailSuccess = await sendEmail(e, `🚀 Automation Starting: ${auto.name}`, startMsg);
+                                        logNotification(auto.user_id, 'email', 'start_alert', e, startMsg, emailSuccess ? 'sent' : 'failed');
+                                    }
                                 }
 
                                 notifyUser(auto.user_id, 'info', `Started automation "${auto.name}"`);
@@ -224,7 +228,6 @@ cron.schedule('* * * * *', () => {
 
                 // 2. --- END SUMMARY ---
                 if (processedCount > 0 && pendingCount === 0 && auto.last_summary_sent_date !== todayStr) {
-                    // Find when the NEXT one is scheduled
                     db.get(`SELECT MIN(sent_time) as nextRun FROM automation_logs WHERE automation_id = ? AND status = 'pending'`, [auto.id], async (errNext, nextData) => {
                         let nextRunStr = "Not scheduled";
                         if (!errNext && nextData && nextData.nextRun) {
@@ -237,14 +240,20 @@ cron.schedule('* * * * *', () => {
                                 
                                 // WhatsApp
                                 if (auto.personal_whatsapp_number) {
-                                    const waSuccess = await sendMessage(auto.user_id, auto.personal_whatsapp_number, summaryMsg);
-                                    logNotification(auto.user_id, 'whatsapp', 'daily_summary', auto.personal_whatsapp_number, summaryMsg, waSuccess ? 'sent' : 'failed');
+                                    const numbers = auto.personal_whatsapp_number.split(',').map(n => n.trim()).filter(Boolean);
+                                    for (const num of numbers) {
+                                        const waSuccess = await sendMessage(auto.user_id, num, summaryMsg);
+                                        logNotification(auto.user_id, 'whatsapp', 'daily_summary', num, summaryMsg, waSuccess ? 'sent' : 'failed');
+                                    }
                                 }
                                 
                                 // Email
                                 if (auto.user_email) {
-                                    const emailSuccess = await sendEmail(auto.user_email, `🏁 Daily Summary: ${auto.name}`, summaryMsg);
-                                    logNotification(auto.user_id, 'email', 'daily_summary', auto.user_email, summaryMsg, emailSuccess ? 'sent' : 'failed');
+                                    const emails = auto.user_email.split(',').map(e => e.trim()).filter(Boolean);
+                                    for (const e of emails) {
+                                        const emailSuccess = await sendEmail(e, `🏁 Daily Summary: ${auto.name}`, summaryMsg);
+                                        logNotification(auto.user_id, 'email', 'daily_summary', e, summaryMsg, emailSuccess ? 'sent' : 'failed');
+                                    }
                                 }
 
                                 notifyUser(auto.user_id, 'success', `Sent summary for "${auto.name}"`);

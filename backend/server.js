@@ -129,9 +129,14 @@ app.get('/api/settings', authenticateToken, (req, res) => {
 
 app.put('/api/settings', authenticateToken, (req, res) => {
     const { email, personal_whatsapp_number } = req.body;
-    db.run('UPDATE users SET email = ?, personal_whatsapp_number = ? WHERE id = ?', [email, personal_whatsapp_number, req.user.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Settings updated' });
+    
+    // Clean and validate recipients
+    const cleanEmail = email ? email.split(',').map(e => e.trim()).filter(Boolean).join(',') : '';
+    const cleanPhone = personal_whatsapp_number ? personal_whatsapp_number.split(',').map(p => p.trim()).filter(Boolean).join(',') : '';
+
+    db.run(`UPDATE users SET email = ?, personal_whatsapp_number = ? WHERE id = ?`, [cleanEmail, cleanPhone, req.user.id], (err) => {
+        if (err) return res.status(500).json({ error: 'Failed to update settings' });
+        res.json({ message: 'Settings updated successfully' });
     });
 });
 
@@ -286,8 +291,10 @@ app.get('/api/logs', authenticateToken, (req, res) => {
     let queryParams = [req.user.id];
 
     if (status && status !== 'all') {
-        whereClause += ` AND al.status = ?`;
-        queryParams.push(status);
+        const statuses = status.split(',');
+        const statusPlaceholders = statuses.map(() => '?').join(',');
+        whereClause += ` AND al.status IN (${statusPlaceholders})`;
+        queryParams.push(...statuses);
     }
 
     const countQuery = `SELECT COUNT(*) as total FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE ${whereClause}`;

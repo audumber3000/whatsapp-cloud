@@ -98,10 +98,12 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
                 contact_id INTEGER,
                 status TEXT DEFAULT 'pending',
                 error_reason TEXT,
+                content TEXT,
                 sent_time DATETIME,
                 FOREIGN KEY (automation_id) REFERENCES automations(id),
                 FOREIGN KEY (contact_id) REFERENCES contacts(id)
             )`);
+            db.run(`ALTER TABLE automation_logs ADD COLUMN content TEXT`, (err) => {});
 
             // Create Notification Logs table
             db.run(`CREATE TABLE IF NOT EXISTS notification_logs (
