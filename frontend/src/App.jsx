@@ -38,6 +38,40 @@ const getTimezoneInfo = () => {
   return { gmt, flag, country };
 };
 
+const TIMEZONES = [
+  { label: 'GMT-12:00', offset: 720 },
+  { label: 'GMT-11:00', offset: 660 },
+  { label: 'GMT-10:00 (Hawaii)', offset: 600 },
+  { label: 'GMT-09:00 (Alaska)', offset: 540 },
+  { label: 'GMT-08:00 (Pacific Time)', offset: 480 },
+  { label: 'GMT-07:00 (Mountain Time)', offset: 420 },
+  { label: 'GMT-06:00 (Central Time)', offset: 360 },
+  { label: 'GMT-05:00 (Eastern Time)', offset: 300 },
+  { label: 'GMT-04:00 (Atlantic Time)', offset: 240 },
+  { label: 'GMT-03:00 (Brasilia)', offset: 180 },
+  { label: 'GMT-02:00 (Mid-Atlantic)', offset: 120 },
+  { label: 'GMT-01:00 (Azores)', offset: 60 },
+  { label: 'GMT+00:00 (London)', offset: 0 },
+  { label: 'GMT+01:00 (Berlin, Paris)', offset: -60 },
+  { label: 'GMT+02:00 (Cairo, Jerusalem)', offset: -120 },
+  { label: 'GMT+03:00 (Moscow, Riyadh)', offset: -180 },
+  { label: 'GMT+03:30 (Tehran)', offset: -210 },
+  { label: 'GMT+04:00 (Dubai)', offset: -240 },
+  { label: 'GMT+04:30 (Kabul)', offset: -270 },
+  { label: 'GMT+05:00 (Karachi)', offset: -300 },
+  { label: 'GMT+05:30 (India)', offset: -330 },
+  { label: 'GMT+05:45 (Kathmandu)', offset: -345 },
+  { label: 'GMT+06:00 (Dhaka)', offset: -360 },
+  { label: 'GMT+06:30 (Yangon)', offset: -390 },
+  { label: 'GMT+07:00 (Bangkok, Jakarta)', offset: -420 },
+  { label: 'GMT+08:00 (Beijing, Singapore)', offset: -480 },
+  { label: 'GMT+09:00 (Tokyo, Seoul)', offset: -540 },
+  { label: 'GMT+09:30 (Adelaide)', offset: -570 },
+  { label: 'GMT+10:00 (Sydney)', offset: -600 },
+  { label: 'GMT+11:00 (Solomon Is.)', offset: -660 },
+  { label: 'GMT+12:00 (Auckland)', offset: -720 },
+];
+
 function App() {
   const [token, setToken] = useState(localStorage.getItem('wa_token') || null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -547,7 +581,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
 function AutomationsView({ token }) {
   const [automations, setAutomations] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5] });
+  const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset() });
   const [editAutomationId, setEditAutomationId] = useState(null);
 
   const fetchAutomations = () => {
@@ -577,7 +611,8 @@ function AutomationsView({ token }) {
           end_time: data.end_time,
           message_template: Array.isArray(blocks) ? blocks : [{ variations: [''] }],
           contacts: data.contacts ? data.contacts.join(', ') : '',
-          active_days: data.active_days ? JSON.parse(data.active_days) : [1,2,3,4,5]
+          active_days: data.active_days ? JSON.parse(data.active_days) : [1,2,3,4,5],
+          timezone_offset: data.timezone_offset !== undefined ? data.timezone_offset : new Date().getTimezoneOffset()
         });
         setEditAutomationId(id);
         setShowModal(true);
@@ -625,7 +660,7 @@ function AutomationsView({ token }) {
   const closeModal = () => {
     setShowModal(false);
     setEditAutomationId(null);
-    setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5] });
+    setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset() });
   };
 
   const handleAddBlock = () => {
@@ -678,7 +713,7 @@ function AutomationsView({ token }) {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ ...formData, contacts: contactList, clientOffset: new Date().getTimezoneOffset() })
+        body: JSON.stringify({ ...formData, contacts: contactList, clientOffset: parseInt(formData.timezone_offset) })
       });
       if (res.ok) {
         closeModal();
@@ -700,7 +735,7 @@ function AutomationsView({ token }) {
             <h3>All Workflows</h3>
             <p className="card-desc">Manage your intelligent message flows and triggers.</p>
           </div>
-          <button className="btn-primary" onClick={() => { setEditAutomationId(null); setFormData(f => ({...f, message_template: [{ variations: [''] }]})); setShowModal(true); }}>
+          <button className="btn-primary" onClick={() => { setEditAutomationId(null); setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [{ variations: [''] }], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset() }); setShowModal(true); }}>
             <Plus size={16} /> New Automation
           </button>
         </div>
@@ -776,6 +811,24 @@ function AutomationsView({ token }) {
                   <label>End Time</label>
                   <input type="time" required value={formData.end_time} onChange={e => setFormData({ ...formData, end_time: e.target.value })} />
                 </div>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Timezone</label>
+                <select 
+                  value={formData.timezone_offset} 
+                  onChange={e => setFormData({ ...formData, timezone_offset: parseInt(e.target.value) })}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', background: '#fff' }}
+                >
+                  {TIMEZONES.map(tz => (
+                    <option key={tz.offset} value={tz.offset}>{tz.label}</option>
+                  ))}
+                </select>
+                {editAutomationId && (
+                  <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                    Note: Adjusting timezone will reschedule upcoming messages.
+                  </div>
+                )}
               </div>
 
               <div className="form-group" style={{ margin: 0 }}>
