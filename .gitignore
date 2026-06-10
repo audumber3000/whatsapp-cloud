@@ -16,6 +16,7 @@ backend/deploy_key.pub
 backend/.wwebjs_auth*/
 backend/.wwebjs_cache*/
 backend/public/
+backend/uploads/
 
 # Frontend specific
 frontend/node_modules/

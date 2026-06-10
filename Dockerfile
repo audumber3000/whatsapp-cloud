@@ -46,6 +46,8 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     ca-certificates \
     fonts-freefont-ttf \
+    fonts-noto-color-emoji \
+    fonts-indic \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

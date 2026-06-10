@@ -2,21 +2,39 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
 // We will import whatsapp and scheduler later
 const whatsappClient = require('./whatsapp');
+const festivalService = require('./festivalService');
+const apiSessions = require('./apiSessions');
 require('./scheduler');
 
 const JWT_SECRET = 'super-secret-wa-reach-key-123'; // In prod, use environment variable
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '12mb' })); // larger limit so logo data-URIs fit
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, 'public')));
+
+// --- Media upload storage (images / PDFs / video for scheduled sends) ---
+const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
+fs.mkdirSync(MEDIA_DIR, { recursive: true });
+const ALLOWED_MEDIA = /^(image\/|video\/|audio\/|application\/pdf$)/;
+const mediaUpload = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, MEDIA_DIR),
+        filename: (req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname || '')),
+    }),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+    fileFilter: (req, file, cb) => cb(null, ALLOWED_MEDIA.test(file.mimetype)),
+});
 
 // --- Auth Middleware ---
 const authenticateToken = (req, res, next) => {
@@ -147,6 +165,165 @@ app.get('/api/notifications/logs', authenticateToken, (req, res) => {
     });
 });
 
+// --- Media attachments ---
+app.post('/api/media', authenticateToken, (req, res) => {
+    mediaUpload.single('file')(req, res, (err) => {
+        if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File too large (max 20MB)' : err.message });
+        if (!req.file) return res.status(400).json({ error: 'No file, or unsupported type (allowed: image, video, audio, PDF)' });
+        db.run(
+            `INSERT INTO media_attachments (user_id, original_name, stored_name, mimetype, size) VALUES (?, ?, ?, ?, ?)`,
+            [req.user.id, req.file.originalname, req.file.filename, req.file.mimetype, req.file.size],
+            function (dbErr) {
+                if (dbErr) {
+                    fs.unlink(path.join(MEDIA_DIR, req.file.filename), () => {});
+                    return res.status(500).json({ error: dbErr.message });
+                }
+                res.json({ id: this.lastID, original_name: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size });
+            }
+        );
+    });
+});
+
+// Stream a media file back (owner only) — used for thumbnails/preview in the UI.
+app.get('/api/media/:id', authenticateToken, (req, res) => {
+    db.get('SELECT * FROM media_attachments WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(404).json({ error: 'Not found' });
+        const filePath = path.join(MEDIA_DIR, row.stored_name);
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing' });
+        res.set('Content-Type', row.mimetype || 'application/octet-stream');
+        res.sendFile(filePath);
+    });
+});
+
+app.delete('/api/media/:id', authenticateToken, (req, res) => {
+    db.get('SELECT * FROM media_attachments WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(404).json({ error: 'Not found' });
+        fs.unlink(path.join(MEDIA_DIR, row.stored_name), () => {});
+        db.run('DELETE FROM media_attachments WHERE id = ?', [req.params.id], () => res.json({ message: 'Deleted' }));
+    });
+});
+
+// --- Festival Status: Brand Kit ---
+app.get('/api/brand-kit', authenticateToken, (req, res) => {
+    db.get('SELECT * FROM brand_kits WHERE user_id = ?', [req.user.id], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(row || {
+            clinic_name: '', tagline: '', phone: '', address: '',
+            primary_color: '#075E54', secondary_color: '#25D366', logo_data: null,
+            template_id: 'festive-classic', timezone_offset: -330, post_hour: 9,
+            auto_post: 1, send_to_contacts: 0
+        });
+    });
+});
+
+app.put('/api/brand-kit', authenticateToken, (req, res) => {
+    const b = req.body || {};
+    // logo_data is a base64 data-URI; basic guard on type/size handled by json limit.
+    if (b.logo_data && !/^data:image\//.test(b.logo_data)) {
+        return res.status(400).json({ error: 'logo_data must be an image data-URI' });
+    }
+    const params = [
+        req.user.id, b.clinic_name || '', b.tagline || '', b.phone || '', b.address || '',
+        b.primary_color || '#075E54', b.secondary_color || '#25D366', b.logo_data || null,
+        b.template_id || 'festive-classic',
+        Number.isFinite(b.timezone_offset) ? b.timezone_offset : -330,
+        Number.isFinite(b.post_hour) ? b.post_hour : 9,
+        b.auto_post ? 1 : 0, b.send_to_contacts ? 1 : 0
+    ];
+    db.run(`
+        INSERT INTO brand_kits (user_id, clinic_name, tagline, phone, address, primary_color, secondary_color, logo_data, template_id, timezone_offset, post_hour, auto_post, send_to_contacts, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            clinic_name=excluded.clinic_name, tagline=excluded.tagline, phone=excluded.phone, address=excluded.address,
+            primary_color=excluded.primary_color, secondary_color=excluded.secondary_color, logo_data=excluded.logo_data,
+            template_id=excluded.template_id, timezone_offset=excluded.timezone_offset, post_hour=excluded.post_hour,
+            auto_post=excluded.auto_post, send_to_contacts=excluded.send_to_contacts, updated_at=CURRENT_TIMESTAMP
+    `, params, (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: 'Brand kit saved' });
+    });
+});
+
+// --- Festival Status: Calendar ---
+app.get('/api/festivals', authenticateToken, (req, res) => {
+    db.all(`
+        SELECT f.id, f.name, f.festival_date, f.greeting, f.emoji, f.accent_color, f.template_id, f.region,
+               (f.poster_image IS NOT NULL) as has_poster,
+               COALESCE(fs.enabled, 1) as enabled,
+               (SELECT COUNT(*) FROM festival_posts fp WHERE fp.user_id = ? AND fp.festival_id = f.id AND fp.status = 'posted') as posted
+        FROM festivals f
+        LEFT JOIN festival_settings fs ON fs.festival_id = f.id AND fs.user_id = ?
+        WHERE f.festival_date >= date('now', '-2 day')
+        ORDER BY f.festival_date ASC
+    `, [req.user.id, req.user.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+// Toggle a clinic's participation in a festival (upsert into festival_settings).
+app.patch('/api/festivals/:id/toggle', authenticateToken, (req, res) => {
+    const festivalId = parseInt(req.params.id);
+    db.run(`
+        INSERT INTO festival_settings (user_id, festival_id, enabled) VALUES (?, ?, 0)
+        ON CONFLICT(user_id, festival_id) DO UPDATE SET enabled = 1 - enabled
+    `, [req.user.id, festivalId], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        db.get('SELECT enabled FROM festival_settings WHERE user_id = ? AND festival_id = ?', [req.user.id, festivalId], (e, row) => {
+            res.json({ enabled: row ? row.enabled : 1 });
+        });
+    });
+});
+
+// Upload (or clear) the full poster artwork for a festival. The branded strip
+// is overlaid on top of this at render time.
+app.put('/api/festivals/:id/poster', authenticateToken, (req, res) => {
+    const festivalId = parseInt(req.params.id);
+    const poster = req.body.poster_image;
+    if (poster && !/^data:image\//.test(poster)) {
+        return res.status(400).json({ error: 'poster_image must be an image data-URI' });
+    }
+    db.run('UPDATE festivals SET poster_image = ? WHERE id = ?', [poster || null, festivalId], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: poster ? 'Poster uploaded' : 'Poster removed' });
+    });
+});
+
+// Live preview of the branded image (returns a PNG).
+app.get('/api/festivals/:id/preview', authenticateToken, async (req, res) => {
+    try {
+        const festival = await festivalService.getFestival(parseInt(req.params.id));
+        if (!festival) return res.status(404).json({ error: 'Festival not found' });
+        const { buf } = await festivalService.renderForUser(req.user.id, festival);
+        res.set('Content-Type', 'image/png');
+        res.send(buf);
+    } catch (e) {
+        if (e.code === 'NO_BRAND_KIT') return res.status(400).json({ error: 'Set up your Brand Kit first' });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Manually post a festival image now (test / on-demand).
+app.post('/api/festivals/:id/post-now', authenticateToken, async (req, res) => {
+    try {
+        const festival = await festivalService.getFestival(parseInt(req.params.id));
+        if (!festival) return res.status(404).json({ error: 'Festival not found' });
+
+        const toContacts = !!req.body.toContacts;
+        const result = await festivalService.postFestivalForUser(req.user.id, festival, { toStatus: true, toContacts });
+        if (!result.ok) return res.status(400).json({ error: result.error || 'Failed to post' });
+
+        const today = new Date().toISOString().split('T')[0];
+        db.run(`INSERT OR REPLACE INTO festival_posts (user_id, festival_id, posted_date, status, channels) VALUES (?, ?, ?, 'posted', ?)`,
+            [req.user.id, festival.id, today, result.channels.join(',')]);
+        res.json({ message: 'Posted', channels: result.channels });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- API Endpoints ---
 app.get('/api/wa/status', authenticateToken, (req, res) => {
     const status = whatsappClient.getStatus(req.user.id);
@@ -209,16 +386,16 @@ app.get('/api/reminders', authenticateToken, (req, res) => {
 
 // Add a reminder
 app.post('/api/reminders', authenticateToken, (req, res) => {
-    const { contact_id, message, scheduled_time } = req.body;
+    const { contact_id, message, scheduled_time, media_id } = req.body;
     // Ensure contact exists for this user
     db.get('SELECT id FROM contacts WHERE id = ? AND user_id = ?', [contact_id, req.user.id], (errC, row) => {
         if (errC || !row) return res.status(400).json({ error: 'Invalid contact' });
-        
-        db.run(`INSERT INTO reminders (user_id, contact_id, message, scheduled_time, status) VALUES (?, ?, ?, ?, 'pending')`,
-            [req.user.id, contact_id, message, scheduled_time],
+
+        db.run(`INSERT INTO reminders (user_id, contact_id, message, scheduled_time, status, media_id) VALUES (?, ?, ?, ?, 'pending', ?)`,
+            [req.user.id, contact_id, message, scheduled_time, media_id || null],
             function (err) {
                 if (err) return res.status(500).json({ error: err.message });
-                res.json({ id: this.lastID, contact_id, message, scheduled_time, status: 'pending' });
+                res.json({ id: this.lastID, contact_id, message, scheduled_time, status: 'pending', media_id: media_id || null });
             });
     });
 });
@@ -620,6 +797,83 @@ app.patch('/api/automations/:id/toggle', authenticateToken, (req, res) => {
     });
 });
 
+// ============================================================
+//  MolarPlus integration API (headless WhatsApp sessions)
+//  Registered before the SPA catch-all so /api/* is never shadowed.
+// ============================================================
+
+// Create / restart a session for a clinic
+app.post('/api/sessions', async (req, res) => {
+    const clinicId = req.body && req.body.clinic_id;
+    if (clinicId === undefined || clinicId === null) {
+        return res.status(400).json({ error: 'clinic_id is required' });
+    }
+    try {
+        const result = await apiSessions.createOrRestartSession(clinicId);
+        res.status(200).json(result);
+    } catch (e) {
+        console.error('[API] create session error:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Fresh QR while pairing
+app.get('/api/sessions/:id/qr', async (req, res) => {
+    try {
+        const data = await apiSessions.getQr(req.params.id);
+        if (!data) return res.status(404).json({ error: 'Session not found' });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Status + phone number
+app.get('/api/sessions/:id/status', async (req, res) => {
+    try {
+        const data = await apiSessions.getStatus(req.params.id);
+        if (!data) return res.status(404).json({ error: 'Session not found' });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Send a message (auth: Authorization: Bearer <api_key>)
+app.post('/api/sessions/:id/send', async (req, res) => {
+    const sessionId = req.params.id;
+    const authHeader = req.headers['authorization'] || '';
+    const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+
+    try {
+        const ok = await apiSessions.authorize(sessionId, apiKey);
+        if (!ok) return res.status(401).json({ error: 'Invalid API key for this session' });
+
+        const { to, text, media_url, log_id } = req.body || {};
+        if (!to || (!text && !media_url)) {
+            return res.status(400).json({ error: '"to" and one of "text"/"media_url" are required' });
+        }
+
+        const messageId = await apiSessions.sendMessage(sessionId, { to, text, media_url, log_id });
+        res.status(200).json({ success: true, message_id: messageId });
+    } catch (e) {
+        if (e.code === 'NOT_CONNECTED') return res.status(409).json({ error: 'Session is not connected' });
+        if (e.code === 'BAD_REQUEST') return res.status(400).json({ error: e.message });
+        console.error('[API] send error:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Logout & cleanup
+app.delete('/api/sessions/:id', async (req, res) => {
+    try {
+        await apiSessions.removeSession(req.params.id);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Fallback route for React Router
 app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) {
@@ -689,5 +943,8 @@ server.listen(PORT, () => {
                 }
             }
         }
+
+        // Restore MolarPlus API sessions (LocalAuth re-auths without re-scan)
+        apiSessions.bootAll().catch(e => console.error('[API] bootAll error:', e.message));
     });
 });

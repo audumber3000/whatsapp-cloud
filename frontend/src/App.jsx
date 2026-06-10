@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Search, LogOut, Link2Off,
-  CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2
+  CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
+  PartyPopper, Palette, Upload, Eye, Send, Paperclip
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -198,6 +199,13 @@ function App() {
             Automations
           </div>
           <div
+            className={`nav-item ${activeTab === 'festivals' ? 'active' : ''}`}
+            onClick={() => setActiveTab('festivals')}
+          >
+            <PartyPopper size={20} />
+            Festival Status
+          </div>
+          <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
             onClick={() => setActiveTab('logs')}
           >
@@ -236,6 +244,7 @@ function App() {
               </>
             )}
             {activeTab === 'automations' && 'Manage Automations'}
+            {activeTab === 'festivals' && 'Festival Status'}
             {activeTab === 'logs' && 'Message Logs'}
             {activeTab === 'settings' && 'User Settings'}
           </div>
@@ -256,7 +265,7 @@ function App() {
         </div>
 
         <div className="page-content">
-          {!isLinked && activeTab !== 'settings' ? (
+          {!isLinked && activeTab !== 'settings' && activeTab !== 'festivals' ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -284,6 +293,7 @@ function App() {
             <>
               {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} />}
               {activeTab === 'automations' && <AutomationsView token={token} />}
+              {activeTab === 'festivals' && <FestivalsView token={token} isLinked={isLinked} setActiveTab={setActiveTab} />}
               {activeTab === 'logs' && <LogsView token={token} />}
               {activeTab === 'settings' && <SettingsView token={token} />}
             </>
@@ -691,6 +701,31 @@ function AutomationsView({ token }) {
      setFormData({ ...formData, message_template: newBlocks });
   };
 
+  const handleAttachMedia = async (blockIndex, file) => {
+     if (!file) return;
+     if (file.size > 20 * 1024 * 1024) return alert("Attachment must be under 20MB.");
+     const body = new FormData();
+     body.append('file', file);
+     try {
+        const res = await fetch(`${API_URL}/media`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body });
+        const d = await res.json();
+        if (!res.ok) return alert(d.error || 'Upload failed');
+        const newBlocks = [...formData.message_template];
+        newBlocks[blockIndex] = { ...newBlocks[blockIndex], media_id: d.id, media_name: d.original_name, media_mime: d.mimetype };
+        setFormData({ ...formData, message_template: newBlocks });
+     } catch (e) {
+        alert('Upload failed');
+     }
+  };
+
+  const handleRemoveMedia = (blockIndex) => {
+     const newBlocks = [...formData.message_template];
+     const b = { ...newBlocks[blockIndex] };
+     delete b.media_id; delete b.media_name; delete b.media_mime;
+     newBlocks[blockIndex] = b;
+     setFormData({ ...formData, message_template: newBlocks });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const contactList = formData.contacts.split(',').map(s => s.trim()).filter(Boolean);
@@ -698,8 +733,9 @@ function AutomationsView({ token }) {
 
     if (formData.message_template.length === 0) return alert("Please add at least one message block.");
     for (const b of formData.message_template) {
-       if (b.variations.filter(v => v.trim()).length === 0) {
-           return alert("Every message block must have at least one non-empty variation.");
+       const hasText = (b.variations || []).filter(v => v.trim()).length > 0;
+       if (!hasText && !b.media_id) {
+           return alert("Every message block needs at least one message variation or an attachment.");
        }
     }
 
@@ -896,9 +932,8 @@ function AutomationsView({ token }) {
                        {block.variations.map((varText, varIndex) => (
                            <div key={varIndex} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'flex-start' }}>
                               <textarea
-                                required
                                 rows={2}
-                                placeholder={`Variation ${varIndex + 1} for block ${blockIndex + 1}...`}
+                                placeholder={block.media_id ? `Caption variation ${varIndex + 1} (optional)...` : `Variation ${varIndex + 1} for block ${blockIndex + 1}...`}
                                 value={varText}
                                 onChange={(e) => handleVariationChange(blockIndex, varIndex, e.target.value)}
                                 style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', resize: 'vertical', fontSize: '13px' }}
@@ -913,6 +948,25 @@ function AutomationsView({ token }) {
                        <button type="button" className="btn-text" onClick={() => handleAddVariation(blockIndex)} style={{ fontSize: '12px', color: '#475569' }}>
                           + Add Variation
                        </button>
+
+                       {/* Attachment (image / PDF / video) — text variations become the caption */}
+                       <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #e2e8f0' }}>
+                          {block.media_id ? (
+                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '6px', padding: '8px 12px' }}>
+                                <Paperclip size={15} color="#4338ca" />
+                                <span style={{ flex: 1, fontSize: '13px', color: '#3730a3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                   {block.media_name || 'Attachment'}
+                                   <span style={{ color: '#818cf8', marginLeft: '6px', fontSize: '11px' }}>({(block.media_mime || '').split('/')[1] || 'file'})</span>
+                                </span>
+                                <button type="button" onClick={() => handleRemoveMedia(blockIndex)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '12px' }}>Remove</button>
+                             </div>
+                          ) : (
+                             <label className="btn-text" style={{ fontSize: '12px', color: '#4338ca', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                <Paperclip size={14} /> Attach image / PDF / video
+                                <input type="file" accept="image/*,video/*,audio/*,application/pdf" style={{ display: 'none' }} onChange={(e) => handleAttachMedia(blockIndex, e.target.files?.[0])} />
+                             </label>
+                          )}
+                       </div>
                     </div>
                  ))}
               </div>
@@ -1146,7 +1200,23 @@ function SettingsView({ token }) {
                 >
                   Account Settings
                 </button>
-                <button 
+                <button
+                  onClick={() => setActiveTab('brandkit')}
+                  style={{
+                    padding: '8px 4px 12px',
+                    border: 'none',
+                    background: 'none',
+                    color: activeTab === 'brandkit' ? '#25d366' : '#64748b',
+                    borderBottom: activeTab === 'brandkit' ? '2px solid #25d366' : '2px solid transparent',
+                    fontWeight: activeTab === 'brandkit' ? '600' : '500',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Brand Kit
+                </button>
+                <button
                   onClick={() => setActiveTab('logs')}
                   style={{ 
                     padding: '8px 4px 12px', 
@@ -1165,7 +1235,9 @@ function SettingsView({ token }) {
              </div>
            </div>
 
-           {activeTab === 'account' ? (
+           {activeTab === 'brandkit' ? (
+             <BrandKitForm token={token} />
+           ) : activeTab === 'account' ? (
              <form style={{ padding: '24px' }} onSubmit={handleSave}>
                {msg.text && (
                   <div style={{ padding: '12px', background: msg.type==='success'?'#dcfce7':'#fee2e2', color: msg.type==='success'?'#15803d':'#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
@@ -1234,6 +1306,347 @@ function SettingsView({ token }) {
              </div>
            )}
        </div>
+    </div>
+  );
+}
+
+// --- BRAND KIT FORM (inside Settings) ---
+function BrandKitForm({ token }) {
+  const [kit, setKit] = useState({
+    clinic_name: '', tagline: '', phone: '', address: '',
+    primary_color: '#075E54', secondary_color: '#25D366', logo_data: null,
+    template_id: 'festive-classic', timezone_offset: -330, post_hour: 9,
+    auto_post: 1, send_to_contacts: 0
+  });
+  const [msg, setMsg] = useState({ text: '', type: '' });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_URL}/brand-kit`, { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => setKit(prev => ({ ...prev, ...d })))
+      .catch(console.error);
+  }, [token]);
+
+  const set = (k, v) => setKit(prev => ({ ...prev, [k]: v }));
+
+  const handleLogo = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) { setMsg({ text: 'Logo must be under 4MB.', type: 'error' }); return; }
+    const reader = new FileReader();
+    reader.onload = () => set('logo_data', reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setMsg({ text: '', type: '' });
+    try {
+      const res = await fetch(`${API_URL}/brand-kit`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...kit,
+          timezone_offset: parseInt(kit.timezone_offset),
+          post_hour: parseInt(kit.post_hour),
+          auto_post: kit.auto_post ? 1 : 0,
+          send_to_contacts: kit.send_to_contacts ? 1 : 0
+        })
+      });
+      if (res.ok) setMsg({ text: 'Brand Kit saved! Your festival images will use these details.', type: 'success' });
+      else setMsg({ text: 'Failed to save Brand Kit.', type: 'error' });
+    } catch (err) {
+      setMsg({ text: err.message, type: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputStyle = { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' };
+
+  return (
+    <form style={{ padding: '24px' }} onSubmit={handleSave}>
+      {msg.text && (
+        <div style={{ padding: '12px', background: msg.type === 'success' ? '#dcfce7' : '#fee2e2', color: msg.type === 'success' ? '#15803d' : '#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
+          {msg.text}
+        </div>
+      )}
+
+      <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+        <Palette size={18} color="#0369a1" style={{ flexShrink: 0, marginTop: 2 }} />
+        <div style={{ fontSize: '13px', color: '#0369a1' }}>
+          <strong>Your Brand</strong><br />
+          These details are baked into every festival greeting image — consistently, every time.
+        </div>
+      </div>
+
+      {/* Logo */}
+      <div className="form-group">
+        <label>Clinic Logo</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '6px' }}>
+          <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+            {kit.logo_data ? <img src={kit.logo_data} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <MessageCircle size={28} color="#94a3b8" />}
+          </div>
+          <label className="btn-outline" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <Upload size={16} /> Upload Logo
+            <input type="file" accept="image/*" onChange={handleLogo} style={{ display: 'none' }} />
+          </label>
+          {kit.logo_data && <button type="button" className="btn-text" style={{ color: 'var(--danger)' }} onClick={() => set('logo_data', null)}>Remove</button>}
+        </div>
+      </div>
+
+      <div className="form-group" style={{ marginTop: '16px' }}>
+        <label>Clinic Name</label>
+        <input style={inputStyle} value={kit.clinic_name || ''} onChange={e => set('clinic_name', e.target.value)} placeholder="e.g. Smile Dental Care" />
+      </div>
+      <div className="form-group" style={{ marginTop: '16px' }}>
+        <label>Tagline (optional)</label>
+        <input style={inputStyle} value={kit.tagline || ''} onChange={e => set('tagline', e.target.value)} placeholder="e.g. Your trusted family dentist" />
+      </div>
+
+      <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
+        <div className="form-group" style={{ flex: 1, margin: 0 }}>
+          <label>Phone</label>
+          <input style={inputStyle} value={kit.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="+91 98765 43210" />
+        </div>
+        <div className="form-group" style={{ flex: 1, margin: 0 }}>
+          <label>Address (short)</label>
+          <input style={inputStyle} value={kit.address || ''} onChange={e => set('address', e.target.value)} placeholder="MG Road, Pune" />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
+        <div className="form-group" style={{ flex: 1, margin: 0 }}>
+          <label>Primary Color</label>
+          <input type="color" value={kit.primary_color || '#075E54'} onChange={e => set('primary_color', e.target.value)} style={{ width: '100%', height: 42, borderRadius: 6, border: '1px solid var(--border-color)', background: '#fff' }} />
+        </div>
+        <div className="form-group" style={{ flex: 1, margin: 0 }}>
+          <label>Secondary Color</label>
+          <input type="color" value={kit.secondary_color || '#25D366'} onChange={e => set('secondary_color', e.target.value)} style={{ width: '100%', height: 42, borderRadius: 6, border: '1px solid var(--border-color)', background: '#fff' }} />
+        </div>
+      </div>
+      <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px' }}>
+        The primary color is used for your business name and the address strip overlaid on each festival poster.
+      </p>
+
+      <div style={{ borderTop: '1px solid var(--border-color)', margin: '24px 0 16px' }} />
+      <h4 style={{ margin: '0 0 12px', color: '#334155' }}>Auto-posting</h4>
+
+      <div style={{ display: 'flex', gap: '16px' }}>
+        <div className="form-group" style={{ flex: 2, margin: 0 }}>
+          <label>Timezone</label>
+          <select value={kit.timezone_offset} onChange={e => set('timezone_offset', parseInt(e.target.value))} style={{ ...inputStyle, background: '#fff' }}>
+            {TIMEZONES.map(tz => <option key={tz.offset} value={tz.offset}>{tz.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group" style={{ flex: 1, margin: 0 }}>
+          <label>Post at (local)</label>
+          <select value={kit.post_hour} onChange={e => set('post_hour', parseInt(e.target.value))} style={{ ...inputStyle, background: '#fff' }}>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+          </select>
+        </div>
+      </div>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '16px', cursor: 'pointer' }}>
+        <input type="checkbox" checked={!!kit.auto_post} onChange={e => set('auto_post', e.target.checked ? 1 : 0)} />
+        <span style={{ fontSize: '14px' }}>Automatically post festival greetings to my WhatsApp <strong>Status</strong> on the festival date</span>
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px', cursor: 'pointer' }}>
+        <input type="checkbox" checked={!!kit.send_to_contacts} onChange={e => set('send_to_contacts', e.target.checked ? 1 : 0)} />
+        <span style={{ fontSize: '14px' }}>Also send the greeting image to all my <strong>contacts</strong> (use carefully)</span>
+      </label>
+
+      <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Brand Kit'}</button>
+      </div>
+    </form>
+  );
+}
+
+// --- FESTIVALS VIEW ---
+function FestivalsView({ token, isLinked, setActiveTab }) {
+  const [festivals, setFestivals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [preview, setPreview] = useState({ url: null, name: '', loading: false });
+  const [postingId, setPostingId] = useState(null);
+  const [banner, setBanner] = useState({ text: '', type: '' });
+
+  const fetchFestivals = () => {
+    fetch(`${API_URL}/festivals`, { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => { setFestivals(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchFestivals(); }, [token]);
+
+  const fmtDate = (d) => {
+    try { return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
+    catch { return d; }
+  };
+
+  const toggle = async (id) => {
+    setFestivals(fs => fs.map(f => f.id === id ? { ...f, enabled: f.enabled ? 0 : 1 } : f));
+    await fetch(`${API_URL}/festivals/${id}/toggle`, { method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` } }).catch(() => {});
+  };
+
+  const showPreview = async (f) => {
+    setPreview({ url: null, name: f.name, loading: true });
+    try {
+      const res = await fetch(`${API_URL}/festivals/${f.id}/preview`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setPreview({ url: null, name: '', loading: false });
+        setBanner({ text: err.error || 'Could not generate preview.', type: 'error' });
+        return;
+      }
+      const blob = await res.blob();
+      setPreview({ url: URL.createObjectURL(blob), name: f.name, loading: false });
+    } catch (e) {
+      setPreview({ url: null, name: '', loading: false });
+      setBanner({ text: 'Could not generate preview.', type: 'error' });
+    }
+  };
+
+  const closePreview = () => {
+    if (preview.url) URL.revokeObjectURL(preview.url);
+    setPreview({ url: null, name: '', loading: false });
+  };
+
+  const uploadPoster = (f, file) => {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) { setBanner({ text: 'Poster must be under 8MB.', type: 'error' }); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const res = await fetch(`${API_URL}/festivals/${f.id}/poster`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ poster_image: reader.result })
+        });
+        if (res.ok) { setBanner({ text: `Poster uploaded for "${f.name}".`, type: 'success' }); fetchFestivals(); }
+        else setBanner({ text: 'Failed to upload poster.', type: 'error' });
+      } catch (e) { setBanner({ text: 'Failed to upload poster.', type: 'error' }); }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const postNow = async (f) => {
+    if (!window.confirm(`Post "${f.name}" to your WhatsApp Status now?`)) return;
+    setPostingId(f.id);
+    setBanner({ text: '', type: '' });
+    try {
+      const res = await fetch(`${API_URL}/festivals/${f.id}/post-now`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toContacts: false })
+      });
+      const d = await res.json();
+      if (res.ok) { setBanner({ text: `Posted "${f.name}" to ${d.channels?.join(' & ') || 'Status'}.`, type: 'success' }); fetchFestivals(); }
+      else setBanner({ text: d.error || 'Failed to post.', type: 'error' });
+    } catch (e) {
+      setBanner({ text: 'Failed to post.', type: 'error' });
+    } finally {
+      setPostingId(null);
+    }
+  };
+
+  return (
+    <div className="view-container">
+      <div className="card full-width">
+        <div className="card-header" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div className="card-title-group">
+            <h3>Festival Greetings</h3>
+            <p className="card-desc">Branded festival images auto-posted to your WhatsApp Status on the day.</p>
+          </div>
+          <button className="btn-outline" onClick={() => setActiveTab('settings')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <Palette size={16} /> Edit Brand Kit
+          </button>
+        </div>
+
+        {banner.text && (
+          <div style={{ margin: '0 0 16px', padding: '12px', background: banner.type === 'success' ? '#dcfce7' : '#fee2e2', color: banner.type === 'success' ? '#15803d' : '#b91c1c', borderRadius: '8px' }}>
+            {banner.text}
+          </div>
+        )}
+
+        {!isLinked && (
+          <div className="alert-box warning" style={{ marginBottom: '16px' }}>
+            <AlertTriangle size={18} />
+            <div>
+              <strong>WhatsApp not connected</strong>
+              <p>You can preview and configure festivals now. Connect WhatsApp to enable auto-posting.</p>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <p style={{ color: '#94a3b8', fontSize: 14 }}>Loading festivals…</p>
+        ) : festivals.length === 0 ? (
+          <p style={{ color: '#94a3b8', fontSize: 14 }}>No upcoming festivals in the calendar.</p>
+        ) : (
+          <div className="automation-grid">
+            {festivals.map(f => (
+              <div className="automation-card" key={f.id} style={{ opacity: f.enabled ? 1 : 0.6 }}>
+                <div className="auto-card-top">
+                  <div className="auto-icon" style={{ fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span>{f.emoji || '🎉'}</span>
+                  </div>
+                  {f.posted > 0
+                    ? <div className="status-label active">Posted</div>
+                    : <div className={`status-label ${f.enabled ? 'active' : 'paused'}`}>{f.enabled ? 'Scheduled' : 'Off'}</div>}
+                </div>
+                <h4>{f.name}</h4>
+                <div className="auto-card-stats">
+                  <div><span className="lbl">Date:</span> {fmtDate(f.festival_date)}</div>
+                  <div style={{ fontSize: '12px', marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '6px', color: f.has_poster ? '#15803d' : '#b45309' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.has_poster ? '#16a34a' : '#f59e0b', display: 'inline-block' }} />
+                    {f.has_poster ? 'Poster uploaded' : 'No poster yet'}
+                  </div>
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '12px 0 4px', cursor: 'pointer', fontSize: '13px', color: '#475569' }}>
+                  <input type="checkbox" checked={!!f.enabled} onChange={() => toggle(f.id)} />
+                  Auto-post this festival
+                </label>
+
+                <label className="btn-outline" style={{ width: '100%', marginTop: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer' }}>
+                  <Upload size={16} /> {f.has_poster ? 'Replace Poster' : 'Upload Poster'}
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => uploadPoster(f, e.target.files?.[0])} />
+                </label>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button className="btn-outline" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={() => showPreview(f)}>
+                    <Eye size={16} /> Preview
+                  </button>
+                  <button className="btn-outline" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: 'var(--primary)', borderColor: 'var(--primary)' }} disabled={!isLinked || postingId === f.id} onClick={() => postNow(f)}>
+                    <Send size={16} /> {postingId === f.id ? 'Posting…' : 'Post Now'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Preview Modal */}
+      {(preview.url || preview.loading) && (
+        <div className="modal-overlay" onClick={closePreview}>
+          <div className="modal-content" style={{ maxWidth: '420px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ marginBottom: '16px' }}>{preview.name} — Preview</h2>
+            {preview.loading ? (
+              <div style={{ padding: '60px', color: '#94a3b8' }}>Generating image…</div>
+            ) : (
+              <img src={preview.url} alt="preview" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-color)' }} />
+            )}
+            <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
+              <button className="btn-primary" onClick={closePreview}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

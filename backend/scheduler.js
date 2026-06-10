@@ -1,7 +1,24 @@
 const cron = require('node-cron');
+const path = require('path');
 const db = require('./db');
-const { sendMessage, notifyUser } = require('./whatsapp');
+const { sendMessage, sendMedia, notifyUser, getStatus } = require('./whatsapp');
 const { sendEmail } = require('./email');
+const festivalService = require('./festivalService');
+
+// Promise helpers for the festival job
+const allP = (sql, params = []) => new Promise((res, rej) => db.all(sql, params, (e, rows) => e ? rej(e) : res(rows || [])));
+const runP = (sql, params = []) => new Promise((res, rej) => db.run(sql, params, function (e) { e ? rej(e) : res(this); }));
+
+// Look up a stored media attachment by id -> info needed to send it.
+const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
+function getMediaById(id) {
+    return new Promise((resolve) => {
+        db.get('SELECT * FROM media_attachments WHERE id = ?', [id], (e, row) => {
+            if (e || !row) return resolve(null);
+            resolve({ filePath: path.join(MEDIA_DIR, row.stored_name), mimetype: row.mimetype, filename: row.original_name });
+        });
+    });
+}
 
 // Helper to log system notifications
 async function logNotification(userId, type, category, recipient, content, status) {
@@ -28,8 +45,8 @@ cron.schedule('* * * * *', () => {
 
     // --- standard reminders ---
     db.all(`
-        SELECT reminders.id, reminders.user_id, reminders.message, contacts.phone 
-        FROM reminders 
+        SELECT reminders.id, reminders.user_id, reminders.message, reminders.media_id, contacts.phone
+        FROM reminders
         JOIN contacts ON reminders.contact_id = contacts.id
         WHERE reminders.status = 'pending' AND reminders.scheduled_time <= ?
     `, [currentMinuteString], async (err, rows) => {
@@ -43,8 +60,16 @@ cron.schedule('* * * * *', () => {
         }
 
         for (const row of rows) {
-            const { id, user_id, message, phone } = row;
-            const success = await sendMessage(user_id, phone, message);
+            const { id, user_id, message, media_id, phone } = row;
+            let success;
+            if (media_id) {
+                const media = await getMediaById(media_id);
+                success = media
+                    ? await sendMedia(user_id, phone, { ...media, caption: message })
+                    : await sendMessage(user_id, phone, message); // attachment gone — send text only
+            } else {
+                success = await sendMessage(user_id, phone, message);
+            }
             const newStatus = success ? 'sent' : 'failed';
             db.run(`UPDATE reminders SET status = ? WHERE id = ?`, [newStatus, id]);
         }
@@ -90,27 +115,44 @@ cron.schedule('* * * * *', () => {
             // Send each block sequentially with a short delay for multi-message blocks
             for (let i = 0; i < messageBlocks.length; i++) {
                 const block = messageBlocks[i];
-                if (block.variations && block.variations.length > 0) {
-                    const rndIndex = Math.floor(Math.random() * block.variations.length);
-                    const msgText = block.variations[rndIndex];
 
-                    if (msgText.trim()) {
-                        const success = await sendMessage(user_id, phone, msgText);
+                // Pick a random caption/message variation (may be empty for media-only blocks)
+                const variations = (block.variations || []).filter(v => typeof v === 'string');
+                const msgText = variations.length ? variations[Math.floor(Math.random() * variations.length)] : '';
+
+                let didSend = false;
+                if (block.media_id) {
+                    // Media block: send the attachment with the chosen variation as caption
+                    const media = await getMediaById(block.media_id);
+                    if (media) {
+                        const success = await sendMedia(user_id, phone, { ...media, caption: msgText });
                         if (!success) overallSuccess = false;
-
-                        // Add small 2-5 second visual typewriter delay between multiple blocks targeting same user
-                        if (i < messageBlocks.length - 1 && overallSuccess) {
-                            const delayMs = Math.floor(Math.random() * 3000) + 2000;
-                            await sleep(delayMs);
-                        }
+                        didSend = true;
+                    } else {
+                        overallSuccess = false; // attachment missing
                     }
+                } else if (msgText.trim()) {
+                    // Text block
+                    const success = await sendMessage(user_id, phone, msgText);
+                    if (!success) overallSuccess = false;
+                    didSend = true;
+                }
+
+                // Human-like gap between sequential blocks to the same contact
+                if (didSend && i < messageBlocks.length - 1) {
+                    const delayMs = Math.floor(Math.random() * 3000) + 2000;
+                    await sleep(delayMs);
                 }
             }
 
             // Update the log status and content
             const newStatus = overallSuccess ? 'delivered' : 'failed';
             const logReason = overallSuccess ? null : 'Failed to reach WhatsApp client or failure in dispatch sequence';
-            const sentContent = messageBlocks.map(b => b.variations[0]).join('\n'); // Simplified for logging
+            const sentContent = messageBlocks.map(b => {
+                const firstVar = (b.variations && b.variations[0]) ? b.variations[0] : '';
+                if (b.media_id) return (b.media_name ? `📎 ${b.media_name}` : '📎 [attachment]') + (firstVar ? ` — ${firstVar}` : '');
+                return firstVar;
+            }).filter(Boolean).join('\n'); // Simplified for logging
             db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ? WHERE id = ?`, [newStatus, logReason, sentContent, log_id]);
 
             // Reschedule for tomorrow if the automation is still active
@@ -265,6 +307,82 @@ cron.schedule('* * * * *', () => {
         }
     });
 
+});
+
+// --- Branded Festival Status auto-poster ---
+// Each minute: for every clinic with auto_post on, if it's at/after their local
+// post hour on a festival date, render the branded image and publish to Status.
+// An atomic "claim" row guarantees we never double-post even if a render is slow.
+async function processFestivals() {
+    let brands;
+    try {
+        brands = await allP(`SELECT * FROM brand_kits WHERE auto_post = 1`);
+    } catch (e) {
+        return console.error('[Festival] Error loading brand kits:', e.message);
+    }
+
+    const nowUTC = new Date();
+    for (const brand of brands) {
+        const offsetMins = brand.timezone_offset || 0;
+        const local = new Date(nowUTC.getTime() - offsetMins * 60000);
+        const localDate = local.toISOString().split('T')[0];
+        const localMins = local.getUTCHours() * 60 + local.getUTCMinutes();
+
+        // Not yet the posting hour in the clinic's timezone
+        if (localMins < (brand.post_hour || 9) * 60) continue;
+        // Skip cheaply (no render) until WhatsApp is actually connected
+        if (!getStatus(brand.user_id).isConnected) continue;
+
+        let fests;
+        try {
+            fests = await allP(`
+                SELECT f.* FROM festivals f
+                LEFT JOIN festival_settings fs ON fs.festival_id = f.id AND fs.user_id = ?
+                WHERE f.festival_date = ? AND COALESCE(fs.enabled, 1) = 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM festival_posts fp
+                      WHERE fp.user_id = ? AND fp.festival_id = f.id AND fp.posted_date = ? AND fp.status = 'posted'
+                  )
+            `, [brand.user_id, localDate, brand.user_id, localDate]);
+        } catch (e) {
+            console.error('[Festival] Query error:', e.message);
+            continue;
+        }
+
+        for (const festival of fests) {
+            // Atomic claim: INSERT OR IGNORE returns changes=1 only for the winner.
+            let claimed;
+            try {
+                const r = await runP(
+                    `INSERT OR IGNORE INTO festival_posts (user_id, festival_id, posted_date, status) VALUES (?, ?, ?, 'pending')`,
+                    [brand.user_id, festival.id, localDate]
+                );
+                claimed = r.changes === 1;
+            } catch (e) { continue; }
+            if (!claimed) continue;
+
+            console.log(`[Festival] Posting "${festival.name}" for user ${brand.user_id}...`);
+            const result = await festivalService.postFestivalForUser(brand.user_id, festival, {
+                toStatus: true,
+                toContacts: !!brand.send_to_contacts,
+            });
+
+            if (result.ok) {
+                await runP(`UPDATE festival_posts SET status = 'posted', channels = ? WHERE user_id = ? AND festival_id = ? AND posted_date = ?`,
+                    [result.channels.join(','), brand.user_id, festival.id, localDate]).catch(() => {});
+                notifyUser(brand.user_id, 'success', `Posted "${festival.name}" to your WhatsApp Status`);
+            } else {
+                // Release the claim so it can retry later today (e.g. if WA dropped mid-post)
+                await runP(`DELETE FROM festival_posts WHERE user_id = ? AND festival_id = ? AND posted_date = ? AND status = 'pending'`,
+                    [brand.user_id, festival.id, localDate]).catch(() => {});
+                console.warn(`[Festival] Failed to post "${festival.name}" for user ${brand.user_id}: ${result.error}`);
+            }
+        }
+    }
+}
+
+cron.schedule('* * * * *', () => {
+    processFestivals().catch(e => console.error('[Festival] Unexpected error:', e));
 });
 
 console.log('Scheduler is running.');
