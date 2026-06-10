@@ -3,7 +3,17 @@ dist
 **/dist
 .DS_Store
 *.local
-backend/data/*.sqlite
-backend/.wwebjs_auth_user_*
-backend/.wwebjs_cache
 
+# Runtime data — mounted as volumes at runtime, must never enter the build context
+# (these were bloating the build to several GB and filling the server disk).
+backend/data
+backend/sessions
+backend/uploads
+backend/database.db
+backend/public
+**/.wwebjs_auth*
+**/.wwebjs_cache*
+
+# Local env / secrets stay out of the image build context
+.env
+**/.env

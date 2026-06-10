@@ -8,6 +8,8 @@ services:
       - ./backend/sessions:/app/backend/sessions
       - ./backend/uploads:/app/backend/uploads
     restart: always
+    env_file:
+      - ./backend/.env
     environment:
       - NODE_ENV=production
       - CHROME_PATH=/usr/bin/chromium
