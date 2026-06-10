@@ -6,6 +6,7 @@ services:
     volumes:
       - ./backend/data:/app/backend/data
       - ./backend/sessions:/app/backend/sessions
+      - ./backend/uploads:/app/backend/uploads
     restart: always
     environment:
       - NODE_ENV=production
