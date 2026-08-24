@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Key, Copy, Check, RefreshCw, AlertTriangle, Terminal } from 'lucide-react';
+import { useConfirm } from './ui/ConfirmDialog';
 
 /**
  * API key management.
@@ -13,6 +14,7 @@ export default function ApiKeyPanel({ apiUrl, token }) {
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [copied, setCopied] = useState('');
+    const confirm = useConfirm();
 
     const auth = { Authorization: `Bearer ${token}` };
 
@@ -28,7 +30,15 @@ export default function ApiKeyPanel({ apiUrl, token }) {
     const issue = async () => {
         // Rotating invalidates the old key immediately, so anything still using
         // it breaks — worth saying out loud rather than discovering in prod.
-        if (key && !window.confirm('Generate a new key?\n\nThe current key stops working straight away, and any app using it will start failing until you update it.')) return;
+        if (key) {
+            const ok = await confirm({
+                title: 'Generate a new key?',
+                body: 'The current key stops working immediately, and anything using it will start failing until you update it there.',
+                confirmLabel: 'Generate new key',
+                danger: true,
+            });
+            if (!ok) return;
+        }
         setBusy(true);
         try {
             const r = await fetch(`${apiUrl}/apikey`, { method: 'POST', headers: auth });

@@ -9,6 +9,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
 import InboxView from './components/InboxView';
 import ErrorBoundary from './components/ErrorBoundary';
+import AppHeader from './components/AppHeader';
+import ProfileView from './components/ProfileView';
+import { useConfirm } from './components/ui/ConfirmDialog';
 import ResponseSummary from './components/ResponseSummary';
 import ActivityFeed from './components/ActivityFeed';
 import ApiKeyPanel from './components/ApiKeyPanel';
@@ -93,6 +96,19 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [socketRef, setSocketRef] = useState(null);
+  const [me, setMe] = useState(null);
+  const confirmDisconnect = useConfirm();
+
+  // Who is signed in, which workspace, and which number is connected.
+  const loadMe = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await fetch(`${API_URL}/account/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok) setMe(await r.json());
+      else if (r.status === 401) handleLogout();
+    } catch { /* leave the shell usable */ }
+  }, [token]);
+  useEffect(() => { loadMe(); }, [loadMe]);
   const [unread, setUnread] = useState(0);
 
   // Colour theme. Default follows the OS; an explicit choice is remembered and
@@ -190,7 +206,12 @@ function MainApp() {
   };
 
   const handleWADisconnect = async () => {
-    if (!window.confirm("Are you sure you want to disconnect WhatsApp? You will need to scan a new QR code to reconnect.")) return;
+    const ok = await confirmDisconnect({
+      title: 'Disconnect WhatsApp?',
+      body: 'Messages stop sending until you scan a new QR code to reconnect.',
+      confirmLabel: 'Disconnect', danger: true,
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`${API_URL}/wa/disconnect`, {
         method: 'POST',
@@ -201,7 +222,7 @@ function MainApp() {
         setQrCodeData('');
         setUserPhone(null);
       } else {
-        alert("Failed to disconnect.");
+        addNotification('error', 'Could not disconnect WhatsApp.');
       }
     } catch (e) {
       console.error(e);
@@ -302,53 +323,24 @@ function MainApp() {
 
       {/* Main Content */}
       <div className="main-wrapper">
-        <div className="header">
-          <button
-            className="icon-btn menu-toggle"
-            onClick={() => setSidebarOpen(o => !o)}
-            aria-label="Toggle navigation"
-          >
-            <Menu size={20} />
-          </button>
-          <div className="header-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {activeTab === 'dashboard' && (
-              <>
-                Dashboard Overview
-                <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--text-muted)', background: 'var(--bg)', padding: '4px 10px', borderRadius: 'var(--r-full)', marginLeft: '12px' }}>
-                  {getTimezoneInfo().gmt} {getTimezoneInfo().flag} {getTimezoneInfo().country}
-                </span>
-              </>
-            )}
-            {activeTab === 'automations' && 'Manage Automations'}
-            {activeTab === 'contacts' && 'Contacts'}
-            {activeTab === 'inbox' && 'Inbox'}
-            {activeTab === 'logs' && 'Message Logs'}
-            {activeTab === 'settings' && 'User Settings'}
-          </div>
-
-          <div className="header-actions">
-            <button
-              className="icon-btn"
-              onClick={toggleTheme}
-              title={effectiveTheme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-              aria-label="Toggle colour theme"
-            >
-              {effectiveTheme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-            </button>
-            <div className="user-profile">
-              <div className="user-info">
-                <span className="user-name">User</span>
-              </div>
-              <button className="icon-btn" onClick={handleLogout} title="Logout" style={{ marginLeft: 8 }}>
-                <LogOut size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
+        <AppHeader
+          title={{
+            dashboard: 'Dashboard', automations: 'Automations', contacts: 'Contacts',
+            inbox: 'Inbox', logs: 'Message Logs', settings: 'Settings', profile: 'Your Profile',
+          }[activeTab] || 'WA Reach'}
+          me={me}
+          isLinked={isLinked}
+          userPhone={userPhone}
+          effectiveTheme={effectiveTheme}
+          onToggleTheme={toggleTheme}
+          onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          onNavigate={(tab) => { setSidebarOpen(false); setActiveTab(tab); }}
+          onLogout={handleLogout}
+        />
 
         <div className="page-content">
         <ErrorBoundary>
-          {!isLinked && !['settings', 'contacts', 'inbox'].includes(activeTab) ? (
+          {!isLinked && !['settings', 'contacts', 'inbox', 'profile'].includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -375,8 +367,8 @@ function MainApp() {
           ) : (
             <>
               {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} socket={socketRef} />}
-              {activeTab === 'automations' && <AutomationsView token={token} />}
-              {activeTab === 'contacts' && <ContactsView token={token} />}
+              {activeTab === 'automations' && <AutomationsView token={token} onToast={addNotification} />}
+              {activeTab === 'contacts' && <ContactsView token={token} onToast={addNotification} />}
               {activeTab === 'inbox' && (
                 <InboxView
                   apiUrl={API_URL}
@@ -387,6 +379,14 @@ function MainApp() {
               )}
               {activeTab === 'logs' && <LogsView token={token} />}
               {activeTab === 'settings' && <SettingsView token={token} />}
+              {activeTab === 'profile' && (
+                <ProfileView
+                  apiUrl={API_URL}
+                  token={token}
+                  onToast={addNotification}
+                  onProfileSaved={loadMe}
+                />
+              )}
             </>
           )}
         </ErrorBoundary>
@@ -420,6 +420,9 @@ function AuthView({ setToken }) {
 
       if (isLogin) {
         localStorage.setItem('wa_token', data.accessToken);
+        // Previously only the token was kept, so the app never knew who was
+        // signed in — the header literally rendered the string "User".
+        if (data.refresh_token) localStorage.setItem('wa_refresh', data.refresh_token);
         setToken(data.accessToken);
       } else {
         setIsLogin(true);
@@ -684,7 +687,8 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
 }
 
 
-function AutomationsView({ token }) {
+function AutomationsView({ token, onToast }) {
+  const confirm = useConfirm();
   const [automations, setAutomations] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset(), ask_confirmation: false });
@@ -724,7 +728,7 @@ function AutomationsView({ token }) {
         setEditAutomationId(id);
         setShowModal(true);
       } else {
-        alert("Failed to fetch automation details.");
+        onToast('error', 'Could not load that automation.');
       }
     } catch (err) {
       console.error(err);
@@ -732,7 +736,12 @@ function AutomationsView({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this automation completely?")) return;
+    const ok = await confirm({
+      title: 'Delete this automation?',
+      body: 'Any messages still queued for it will be cancelled. This cannot be undone.',
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`${API_URL}/automations/${id}`, {
         method: 'DELETE',
@@ -741,7 +750,7 @@ function AutomationsView({ token }) {
       if (res.ok) {
         fetchAutomations();
       } else {
-        alert("Failed to delete automation.");
+        onToast('error', 'Could not delete the automation.');
       }
     } catch (e) {
       console.error(e);
@@ -757,7 +766,7 @@ function AutomationsView({ token }) {
       if (res.ok) {
         fetchAutomations();
       } else {
-        alert("Failed to toggle automation.");
+        onToast('error', 'Could not change the automation status.');
       }
     } catch (e) {
       console.error(e);
@@ -800,18 +809,18 @@ function AutomationsView({ token }) {
 
   const handleAttachMedia = async (blockIndex, file) => {
      if (!file) return;
-     if (file.size > 20 * 1024 * 1024) return alert("Attachment must be under 20MB.");
+     if (file.size > 20 * 1024 * 1024) return onToast('error', 'Attachment must be under 20MB.');
      const body = new FormData();
      body.append('file', file);
      try {
         const res = await fetch(`${API_URL}/media`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body });
         const d = await res.json();
-        if (!res.ok) return alert(d.error || 'Upload failed');
+        if (!res.ok) return onToast('error', d.error || 'Upload failed.');
         const newBlocks = [...formData.message_template];
         newBlocks[blockIndex] = { ...newBlocks[blockIndex], media_id: d.id, media_name: d.original_name, media_mime: d.mimetype };
         setFormData({ ...formData, message_template: newBlocks });
      } catch (e) {
-        alert('Upload failed');
+        onToast('error', 'Upload failed.');
      }
   };
 
@@ -826,13 +835,13 @@ function AutomationsView({ token }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const contactList = formData.contacts.split(',').map(s => s.trim()).filter(Boolean);
-    if (contactList.length === 0) return alert("Please enter at least one contact phone number.");
+    if (contactList.length === 0) return onToast('warning', 'Add at least one contact number.');
 
-    if (formData.message_template.length === 0) return alert("Please add at least one message block.");
+    if (formData.message_template.length === 0) return onToast('warning', 'Add at least one message block.');
     for (const b of formData.message_template) {
        const hasText = (b.variations || []).filter(v => v.trim()).length > 0;
        if (!hasText && !b.media_id) {
-           return alert("Every message block needs at least one message variation or an attachment.");
+           return onToast('warning', 'Every block needs a message or an attachment.');
        }
     }
 
@@ -853,7 +862,7 @@ function AutomationsView({ token }) {
         fetchAutomations();
       } else {
         const d = await res.json();
-        alert(d.error || 'Failed to save automation');
+        onToast('error', d.error || 'Could not save the automation.');
       }
     } catch (err) {
       console.error(err);
@@ -1579,7 +1588,8 @@ function ClinicDashboard({ ssoToken }) {
 }
 
 // --- CONTACTS VIEW ---
-function ContactsView({ token }) {
+function ContactsView({ token, onToast }) {
+  const confirm = useConfirm();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1670,7 +1680,12 @@ function ContactsView({ token }) {
   };
 
   const deleteContact = async (c) => {
-    if (!window.confirm(`Delete ${c.name || c.phone}?`)) return;
+    const ok = await confirm({
+      title: `Delete ${c.name || c.phone}?`,
+      body: 'Their message history stays, but they are removed from your contacts.',
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
     const res = await fetch(`${API_URL}/contacts/${c.id}`, { method: 'DELETE', headers: authHeaders });
     if (res.ok) { flash('Contact deleted'); fetchContacts(search.trim()); }
     else flash('Failed to delete', 'error');
