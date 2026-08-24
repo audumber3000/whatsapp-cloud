@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
   MessageCircle, LayoutDashboard, Zap, Activity,
-  Settings, Moon, Sun, Menu, Search, LogOut, Link2Off,
+  Settings, Moon, Search, LogOut, Link2Off,
   CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
   Upload, Paperclip, Users, Pencil
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { WhatsAppGlyph, Logo } from './components/Brand';
 
 import { io } from 'socket.io-client';
 import {
@@ -86,26 +85,6 @@ function App() {
 function MainApp() {
   const [token, setToken] = useState(localStorage.getItem('wa_token') || null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // Colour theme. Default follows the OS; an explicit choice is remembered and
-  // stamped on <html> so the CSS [data-theme] blocks win over the media query.
-  // Storage can throw in private windows, so every access is guarded.
-  const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('wa_theme') || 'system'; } catch { return 'system'; }
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'system') root.removeAttribute('data-theme');
-    else root.setAttribute('data-theme', theme);
-    try { localStorage.setItem('wa_theme', theme); } catch { /* ignore */ }
-  }, [theme]);
-
-  const prefersDark = typeof window !== 'undefined'
-    && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-  const effectiveTheme = theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme;
-  const toggleTheme = () => setTheme(effectiveTheme === 'dark' ? 'light' : 'dark');
 
   // WA Connection State
   const [isLinked, setIsLinked] = useState(false);
@@ -205,45 +184,46 @@ function MainApp() {
       </div>
 
       {/* Sidebar */}
-      <div className={`sidebar-backdrop${sidebarOpen ? ' show' : ''}`} onClick={() => setSidebarOpen(false)} />
-      <div className={`sidebar${sidebarOpen ? ' open' : ''}`}>
+      <div className="sidebar">
         <div className="sidebar-logo">
-          <Logo size={22} showText={false} />
+          <div className="sidebar-logo-icon" style={{ background: '#25D366', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', padding: '6px' }}>
+            <MessageCircle size={24} fill="currentColor" />
+          </div>
           WA Reach
         </div>
 
         <div className="nav-menu">
           <div
             className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('dashboard')}
+            onClick={() => setActiveTab('dashboard')}
           >
             <LayoutDashboard size={20} />
             Dashboard
           </div>
           <div
             className={`nav-item ${activeTab === 'automations' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('automations')}
+            onClick={() => setActiveTab('automations')}
           >
             <Zap size={20} />
             Automations
           </div>
           <div
             className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('contacts')}
+            onClick={() => setActiveTab('contacts')}
           >
             <Users size={20} />
             Contacts
           </div>
           <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
+            onClick={() => setActiveTab('logs')}
           >
             <Activity size={20} />
             Activity Logs
           </div>
           <div 
              className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-             onClick={() => setSidebarOpen(false) || setActiveTab('settings')}
+             onClick={() => setActiveTab('settings')}
           >
             <Settings size={20} />
             Settings
@@ -263,18 +243,11 @@ function MainApp() {
       {/* Main Content */}
       <div className="main-wrapper">
         <div className="header">
-          <button
-            className="icon-btn menu-toggle"
-            onClick={() => setSidebarOpen(o => !o)}
-            aria-label="Toggle navigation"
-          >
-            <Menu size={20} />
-          </button>
           <div className="header-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {activeTab === 'dashboard' && (
               <>
                 Dashboard Overview
-                <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--text-muted)', background: 'var(--bg)', padding: '4px 10px', borderRadius: '20px', marginLeft: '12px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--text-muted)', background: 'var(--bg-color)', padding: '4px 10px', borderRadius: '20px', marginLeft: '12px' }}>
                   {getTimezoneInfo().gmt} {getTimezoneInfo().flag} {getTimezoneInfo().country}
                 </span>
               </>
@@ -286,13 +259,8 @@ function MainApp() {
           </div>
 
           <div className="header-actions">
-            <button
-              className="icon-btn"
-              onClick={toggleTheme}
-              title={effectiveTheme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-              aria-label="Toggle colour theme"
-            >
-              {effectiveTheme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+            <button className="icon-btn">
+              <Moon size={20} />
             </button>
             <div className="user-profile">
               <div className="user-info">
@@ -310,8 +278,8 @@ function MainApp() {
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                  <div style={{ background: 'var(--brand-bubble)', padding: '16px', borderRadius: '50%', color: 'var(--brand-deep)' }}>
-                    <WhatsAppGlyph size={34} />
+                  <div style={{ background: '#dcf8c6', padding: '16px', borderRadius: '50%', color: '#075e54' }}>
+                    <MessageCircle size={40} />
                   </div>
                 </div>
                 <h2>Connect WhatsApp</h2>
@@ -322,7 +290,7 @@ function MainApp() {
                      <QRCodeSVG value={qrCodeData} size={200} level="L" />
                   ) : (
                     <div className="qr-placeholder-img">
-                      <span style={{ color: 'var(--text-faint)', fontSize: '14px' }}>QR Code Loading...</span>
+                      <span style={{ color: '#94a3b8', fontSize: '14px' }}>QR Code Loading...</span>
                     </div>
                   )}
                 </div>
@@ -384,7 +352,9 @@ function AuthView({ setToken }) {
       <div className="auth-card">
         <div className="auth-header">
           <div className="auth-logo-text">
-            <Logo size={24} showText={false} />
+            <div className="sidebar-logo-icon" style={{ background: '#25D366', color: 'white', display: 'inline-flex', padding: 8, borderRadius: 12 }}>
+              <MessageCircle size={24} fill="currentColor" />
+            </div>
             WA Reach
           </div>
           <h2>{isLogin ? 'Welcome Back' : 'Get Started'}</h2>
@@ -460,9 +430,9 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
-        <div style={{ background: 'var(--surface)', padding: '10px', border: '1px solid var(--border)', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
-          <p style={{ fontWeight: 600, color: 'var(--text)', marginBottom: '4px' }}>{label}</p>
-          <p style={{ color: 'var(--brand)' }}>Sent: {payload[0].value} messages</p>
+        <div style={{ background: '#fff', padding: '10px', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+          <p style={{ fontWeight: 600, color: '#1e293b', marginBottom: '4px' }}>{label}</p>
+          <p style={{ color: '#25D366' }}>Sent: {payload[0].value} messages</p>
         </div>
       );
     }
@@ -473,19 +443,19 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
     <div className="view-container">
       
       {/* Session Status Banner */}
-      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '8px', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', background: '#fff', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--border-color)', marginBottom: '8px', justifyContent: 'space-between' }}>
          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-             <MessageCircle size={28} color={isLinked ? 'var(--brand)' : 'var(--text-faint)'} />
+             <MessageCircle size={28} color={isLinked ? 'var(--primary)' : '#94a3b8'} />
              <div>
-                <div style={{ fontWeight: 600, color: 'var(--text)', fontSize: '15px' }}>WhatsApp Session Status</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
+                <div style={{ fontWeight: 600, color: '#1e293b', fontSize: '15px' }}>WhatsApp Session Status</div>
+                <div style={{ color: '#64748b', fontSize: '13px' }}>
                    {userPhone ? `Connected as +${userPhone}` : 'No phone linked'}
                 </div>
              </div>
          </div>
          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: isLinked ? 'var(--brand)' : 'var(--danger)' }}></div>
-            <span style={{ fontWeight: 600, color: isLinked ? 'var(--brand)' : 'var(--danger)' }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: isLinked ? 'var(--primary)' : 'var(--danger)' }}></div>
+            <span style={{ fontWeight: 600, color: isLinked ? 'var(--primary)' : 'var(--danger)' }}>
                 {isLinked ? 'Active' : 'Disconnected / Blocked'}
             </span>
          </div>
@@ -526,22 +496,22 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
             <AreaChart data={graphData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--brand)" stopOpacity={0.4}/>
-                  <stop offset="95%" stopColor="var(--brand)" stopOpacity={0}/>
+                  <stop offset="5%" stopColor="#25D366" stopOpacity={0.4}/>
+                  <stop offset="95%" stopColor="#25D366" stopOpacity={0}/>
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
               <XAxis 
                 dataKey="time" 
                 axisLine={false} 
                 tickLine={false} 
-                tick={{ fontSize: 12, fill: 'var(--text-muted)' }}
+                tick={{ fontSize: 12, fill: '#64748b' }}
                 interval={3}
               />
               <YAxis 
                 axisLine={false} 
                 tickLine={false} 
-                tick={{ fontSize: 12, fill: 'var(--text-muted)' }}
+                tick={{ fontSize: 12, fill: '#64748b' }}
               />
               <Tooltip content={<CustomTooltip />} />
               
@@ -564,7 +534,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
               <Area 
                 type="monotone" 
                 dataKey="count" 
-                stroke="var(--brand)" 
+                stroke="#25D366" 
                 strokeWidth={3}
                 fillOpacity={1} 
                 fill="url(#colorCount)" 
@@ -579,10 +549,10 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
         <div className="card">
           <div className="card-header">
             <h3>Recent Automations</h3>
-            <button className="btn-text" onClick={() => setSidebarOpen(false) || setActiveTab('automations')}>View All <ArrowRight size={16} /></button>
+            <button className="btn-text" onClick={() => setActiveTab('automations')}>View All <ArrowRight size={16} /></button>
           </div>
           <div className="card-list">
-            {recentAutomations.length === 0 ? <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>No automations running.</p> : null}
+            {recentAutomations.length === 0 ? <p style={{ color: '#94a3b8', fontSize: 14 }}>No automations running.</p> : null}
             {recentAutomations.map(task => (
               <div className="list-item" key={task.id}>
                 <div>
@@ -600,10 +570,10 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
         <div className="card">
           <div className="card-header">
             <h3>Recent Logs</h3>
-            <button className="btn-text" onClick={() => setSidebarOpen(false) || setActiveTab('logs')}>View All <ArrowRight size={16} /></button>
+            <button className="btn-text" onClick={() => setActiveTab('logs')}>View All <ArrowRight size={16} /></button>
           </div>
           <div className="card-list">
-            {recentLogs.length === 0 ? <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>No recent activity.</p> : null}
+            {recentLogs.length === 0 ? <p style={{ color: '#94a3b8', fontSize: 14 }}>No recent activity.</p> : null}
             {recentLogs.map(log => (
               <div className="list-item" key={log.id}>
                 <div>
@@ -816,7 +786,7 @@ function AutomationsView({ token }) {
         </div>
 
         <div className="automation-grid">
-          {automations.length === 0 ? <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>No automations found. Create one to get started.</p> : null}
+          {automations.length === 0 ? <p style={{ color: '#94a3b8', fontSize: 14 }}>No automations found. Create one to get started.</p> : null}
           {automations.map(task => (
             <div className="automation-card" key={task.id}>
               <div className="auto-card-top">
@@ -834,14 +804,14 @@ function AutomationsView({ token }) {
                   <span className="lbl">Queue size:</span> {task.count}
                 </div>
                 {task.timezone_offset !== undefined && (
-                  <div style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: '4px' }}>
+                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
                     <Clock size={10} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
                     Timezone: GMT{task.timezone_offset <= 0 ? '+' : '-'}{Math.floor(Math.abs(task.timezone_offset)/60)}:{String(Math.abs(task.timezone_offset)%60).padStart(2, '0')}
                   </div>
                 )}
               </div>
               <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                <button className="btn-outline" style={{ flex: 1, color: task.status === 'Active' ? 'var(--danger)' : 'var(--brand)', borderColor: task.status === 'Active' ? 'var(--danger)' : 'var(--brand)' }} onClick={() => handleToggle(task.id)}>
+                <button className="btn-outline" style={{ flex: 1, color: task.status === 'Active' ? 'var(--danger)' : 'var(--primary)', borderColor: task.status === 'Active' ? 'var(--danger)' : 'var(--primary)' }} onClick={() => handleToggle(task.id)}>
                    {task.status === 'Active' ? 'Stop' : 'Start'}
                 </button>
                 <button className="btn-outline" style={{ flex: 1 }} onClick={() => handleEditClick(task.id)}>Edit</button>
@@ -893,14 +863,14 @@ function AutomationsView({ token }) {
                 <select 
                   value={formData.timezone_offset} 
                   onChange={e => setFormData({ ...formData, timezone_offset: parseInt(e.target.value) })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', outline: 'none', background: 'var(--surface)' }}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', background: '#fff' }}
                 >
                   {TIMEZONES.map(tz => (
                     <option key={tz.offset} value={tz.offset}>{tz.label}</option>
                   ))}
                 </select>
                 {editAutomationId && (
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
                     Note: Adjusting timezone will reschedule upcoming messages.
                   </div>
                 )}
@@ -921,8 +891,8 @@ function AutomationsView({ token }) {
                       }}
                       style={{
                         width: '32px', height: '32px', borderRadius: '50%', border: 'none',
-                        backgroundColor: formData.active_days.includes(i) ? 'var(--success-bg)' : 'var(--surface-raised)',
-                        color: formData.active_days.includes(i) ? 'var(--success)' : 'var(--text-faint)',
+                        backgroundColor: formData.active_days.includes(i) ? '#dcfce7' : '#f1f5f9',
+                        color: formData.active_days.includes(i) ? '#15803d' : '#94a3b8',
                         fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'all 0.2s'
                       }}
@@ -941,7 +911,7 @@ function AutomationsView({ token }) {
                   placeholder="e.g. 15551234567, 44207946, 91987654321"
                   value={formData.contacts}
                   onChange={e => setFormData({ ...formData, contacts: e.target.value })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', resize: 'vertical' }}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-color)', resize: 'vertical' }}
                 />
               </div>
 
@@ -949,18 +919,18 @@ function AutomationsView({ token }) {
               <div className="form-group" style={{ margin: 0 }}>
                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <label style={{ margin: 0 }}>Message Sequence</label>
-                    <button type="button" className="btn-text" onClick={handleAddBlock} style={{ color: 'var(--brand)', fontWeight: 600, fontSize: '13px' }}>
+                    <button type="button" className="btn-text" onClick={handleAddBlock} style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '13px' }}>
                        + Add Message Block
                     </button>
                  </div>
-                 <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '12px' }}>
+                 <div style={{ color: '#64748b', fontSize: '12px', marginBottom: '12px' }}>
                     Multiple Blocks will be sent independently one after another as sequential messages. Adding variations to a block prevents account bans.
                  </div>
 
                  {formData.message_template.map((block, blockIndex) => (
-                    <div key={blockIndex} style={{ border: '1px solid var(--border)', background: 'var(--surface-sunken)', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                    <div key={blockIndex} style={{ border: '1px solid var(--border-color)', background: '#f8fafc', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-                          <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--text)' }}>Message Block {blockIndex + 1}</h4>
+                          <h4 style={{ margin: 0, fontSize: '14px', color: '#334155' }}>Message Block {blockIndex + 1}</h4>
                           {formData.message_template.length > 1 && (
                              <button type="button" onClick={() => handleRemoveBlock(blockIndex)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0 }}>
                                 Remove
@@ -975,32 +945,32 @@ function AutomationsView({ token }) {
                                 placeholder={block.media_id ? `Caption variation ${varIndex + 1} (optional)...` : `Variation ${varIndex + 1} for block ${blockIndex + 1}...`}
                                 value={varText}
                                 onChange={(e) => handleVariationChange(blockIndex, varIndex, e.target.value)}
-                                style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid var(--border-strong)', resize: 'vertical', fontSize: '13px' }}
+                                style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', resize: 'vertical', fontSize: '13px' }}
                               />
                               {block.variations.length > 1 && (
-                                <button type="button" onClick={() => handleRemoveVariation(blockIndex, varIndex)} style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-strong)', padding: '6px', borderRadius: '6px', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                <button type="button" onClick={() => handleRemoveVariation(blockIndex, varIndex)} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px', borderRadius: '6px', color: '#64748b', cursor: 'pointer' }}>
                                    <XCircle size={16} />
                                 </button>
                               )}
                            </div>
                        ))}
-                       <button type="button" className="btn-text" onClick={() => handleAddVariation(blockIndex)} style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                       <button type="button" className="btn-text" onClick={() => handleAddVariation(blockIndex)} style={{ fontSize: '12px', color: '#475569' }}>
                           + Add Variation
                        </button>
 
                        {/* Attachment (image / PDF / video) — text variations become the caption */}
-                       <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed var(--border)' }}>
+                       <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #e2e8f0' }}>
                           {block.media_id ? (
-                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: '6px', padding: '8px 12px' }}>
-                                <Paperclip size={15} color="var(--info)" />
-                                <span style={{ flex: 1, fontSize: '13px', color: 'var(--info)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '6px', padding: '8px 12px' }}>
+                                <Paperclip size={15} color="#4338ca" />
+                                <span style={{ flex: 1, fontSize: '13px', color: '#3730a3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                    {block.media_name || 'Attachment'}
-                                   <span style={{ color: 'var(--info)', marginLeft: '6px', fontSize: '11px' }}>({(block.media_mime || '').split('/')[1] || 'file'})</span>
+                                   <span style={{ color: '#818cf8', marginLeft: '6px', fontSize: '11px' }}>({(block.media_mime || '').split('/')[1] || 'file'})</span>
                                 </span>
                                 <button type="button" onClick={() => handleRemoveMedia(blockIndex)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '12px' }}>Remove</button>
                              </div>
                           ) : (
-                             <label className="btn-text" style={{ fontSize: '12px', color: 'var(--info)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                             <label className="btn-text" style={{ fontSize: '12px', color: '#4338ca', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                                 <Paperclip size={14} /> Attach image / PDF / video
                                 <input type="file" accept="image/*,video/*,audio/*,application/pdf" style={{ display: 'none' }} onChange={(e) => handleAttachMedia(blockIndex, e.target.files?.[0])} />
                              </label>
@@ -1082,7 +1052,7 @@ function LogsView({ token }) {
                <select 
                  value={statusFilter} 
                  onChange={(e) => handleFilterChange(e.target.value)}
-                 style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)', outline: 'none', fontSize: '14px', background: 'var(--surface)' }}
+                 style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', outline: 'none', fontSize: '14px', background: '#fff' }}
                >
                  <option value="all">All Status</option>
                  <option value="delivered">Delivered</option>
@@ -1111,7 +1081,7 @@ function LogsView({ token }) {
             </thead>
             <tbody>
               {currentData.length === 0 && !loading ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No logs found.</td></tr>
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No logs found.</td></tr>
               ) : null}
               {currentData.map((log, idx) => {
                 const isExpanded = expandedLogs.includes(log.id);
@@ -1120,7 +1090,7 @@ function LogsView({ token }) {
                     <tr onClick={() => log.content && toggleExpand(log.id)} style={{ cursor: log.content ? 'pointer' : 'default' }}>
                       <td>
                         {log.content && (
-                          <div style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+                          <div style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
                             <ChevronRight size={16} />
                           </div>
                         )}
@@ -1139,7 +1109,7 @@ function LogsView({ token }) {
                       <tr className="expanded-row">
                         <td></td>
                         <td colSpan={4} style={{ padding: '0 16px 16px' }}>
-                          <div style={{ background: 'var(--surface-raised)', padding: '12px', borderRadius: '8px', fontSize: '13px', color: 'var(--text)', borderLeft: '4px solid var(--brand)', whiteSpace: 'pre-wrap' }}>
+                          <div style={{ background: '#f1f5f9', padding: '12px', borderRadius: '8px', fontSize: '13px', color: '#1e293b', borderLeft: '4px solid #25d366', whiteSpace: 'pre-wrap' }}>
                              {log.content}
                           </div>
                         </td>
@@ -1154,7 +1124,7 @@ function LogsView({ token }) {
 
         {/* Load More Control */}
         {pagination.page < pagination.totalPages && (
-          <div style={{ padding: '24px', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+          <div style={{ padding: '24px', textAlign: 'center', borderTop: '1px solid var(--border-color)' }}>
             <button 
               className="btn-outline" 
               onClick={() => setPage(p => p + 1)} 
@@ -1166,7 +1136,7 @@ function LogsView({ token }) {
           </div>
         )}
         
-        <div style={{ padding: '12px 24px', fontSize: '13px', color: 'var(--text-faint)', borderTop: '1px solid var(--border)', background: 'var(--surface-sunken)', borderRadius: '0 0 12px 12px' }}>
+        <div style={{ padding: '12px 24px', fontSize: '13px', color: '#94a3b8', borderTop: '1px solid var(--border-color)', background: '#f8fafc', borderRadius: '0 0 12px 12px' }}>
           Showing {currentData.length} of {pagination.total} total logs
         </div>
       </div>
@@ -1222,15 +1192,15 @@ function SettingsView({ token }) {
        <div className="card" style={{ maxWidth: '800px', width: '100%', margin: '0 auto' }}>
           <div className="card-header" style={{ display: 'block', paddingBottom: 0 }}>
              {/* Tabs Navigation */}
-             <div style={{ display: 'flex', gap: '24px', borderBottom: '1px solid var(--border)' }}>
+             <div style={{ display: 'flex', gap: '24px', borderBottom: '1px solid var(--border-color)' }}>
                 <button 
-                  onClick={() => setSidebarOpen(false) || setActiveTab('account')}
+                  onClick={() => setActiveTab('account')}
                   style={{ 
                     padding: '8px 4px 12px', 
                     border: 'none', 
                     background: 'none', 
-                    color: activeTab === 'account' ? 'var(--brand)' : 'var(--text-muted)', 
-                    borderBottom: activeTab === 'account' ? '2px solid var(--brand)' : '2px solid transparent',
+                    color: activeTab === 'account' ? '#25d366' : '#64748b', 
+                    borderBottom: activeTab === 'account' ? '2px solid #25d366' : '2px solid transparent',
                     fontWeight: activeTab === 'account' ? '600' : '500', 
                     cursor: 'pointer',
                     fontSize: '14px',
@@ -1240,13 +1210,13 @@ function SettingsView({ token }) {
                   Account Settings
                 </button>
                 <button
-                  onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
+                  onClick={() => setActiveTab('logs')}
                   style={{ 
                     padding: '8px 4px 12px', 
                     border: 'none', 
                     background: 'none', 
-                    color: activeTab === 'logs' ? 'var(--brand)' : 'var(--text-muted)', 
-                    borderBottom: activeTab === 'logs' ? '2px solid var(--brand)' : '2px solid transparent',
+                    color: activeTab === 'logs' ? '#25d366' : '#64748b', 
+                    borderBottom: activeTab === 'logs' ? '2px solid #25d366' : '2px solid transparent',
                     fontWeight: activeTab === 'logs' ? '600' : '500', 
                     cursor: 'pointer',
                     fontSize: '14px',
@@ -1261,14 +1231,14 @@ function SettingsView({ token }) {
            {activeTab === 'account' ? (
              <form style={{ padding: '24px' }} onSubmit={handleSave}>
                {msg.text && (
-                  <div style={{ padding: '12px', background: msg.type==='success'?'var(--success-bg)':'var(--danger-bg)', color: msg.type==='success'?'var(--success)':'var(--danger)', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ padding: '12px', background: msg.type==='success'?'#dcfce7':'#fee2e2', color: msg.type==='success'?'#15803d':'#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
                      {msg.text}
                   </div>
                )}
 
-               <div style={{ background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+               <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                  <span style={{ fontSize: '18px', lineHeight: 1 }}>🔔</span>
-                 <div style={{ fontSize: '13px', color: 'var(--info)' }}>
+                 <div style={{ fontSize: '13px', color: '#0369a1' }}>
                    <strong>System Alerts</strong><br />
                    Configure where you receive daily startup alerts and campaign summaries.
                  </div>
@@ -1276,14 +1246,14 @@ function SettingsView({ token }) {
 
                <div className="form-group">
                   <label>Email Address</label>
-                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)'}}/>
-                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--text-faint)' }}>Used for system notifications and summaries.</p>
+                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
+                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Used for system notifications and summaries.</p>
                </div>
                
                <div className="form-group" style={{ marginTop: '16px' }}>
                   <label>Personal WhatsApp Number</label>
-                  <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 919876543210" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)'}}/>
-                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--text-faint)' }}>Include country code (e.g. 91xxxxxxxxxx).</p>
+                  <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 919876543210" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)'}}/>
+                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#94a3b8' }}>Include country code (e.g. 91xxxxxxxxxx).</p>
                </div>
 
                <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
@@ -1304,7 +1274,7 @@ function SettingsView({ token }) {
                    </thead>
                    <tbody>
                       {notifLogs.length === 0 ? (
-                         <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No notification history yet.</td></tr>
+                         <tr><td colSpan={5} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No notification history yet.</td></tr>
                       ) : (
                          notifLogs.map(log => (
                             <tr key={log.id}>
@@ -1312,7 +1282,7 @@ function SettingsView({ token }) {
                                <td style={{ fontSize: '13px' }}>
                                   {log.category === 'start_alert' ? '🚀 Startup Alert' : '🏁 Daily Summary'}
                                </td>
-                               <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{log.recipient}</td>
+                               <td style={{ fontSize: '12px', color: '#64748b' }}>{log.recipient}</td>
                                <td style={{ fontSize: '12px' }}>{new Date(log.sent_at).toLocaleString()}</td>
                                <td>
                                   <span className={`badge badge-${log.status}`}>
@@ -1370,41 +1340,41 @@ function ClinicDashboard({ ssoToken }) {
   }, [ssoToken]);
 
   const connected = status && status.status === 'connected';
-  const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px 24px' };
+  const card = { background: '#fff', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px 24px' };
 
   if (error) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: 24 }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-color)', padding: 24 }}>
         <div style={{ ...card, maxWidth: 420, textAlign: 'center' }}>
           <AlertTriangle size={32} color="var(--danger)" />
           <h3 style={{ margin: '12px 0 6px' }}>Can’t open dashboard</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>{error}</p>
+          <p style={{ color: '#64748b', fontSize: 14 }}>{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '24px' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-color)', padding: '24px' }}>
       <div style={{ maxWidth: 920, margin: '0 auto' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <div style={{ background: 'var(--brand)', color: 'var(--surface)', display: 'flex', padding: 8, borderRadius: 12 }}>
+          <div style={{ background: '#25D366', color: '#fff', display: 'flex', padding: 8, borderRadius: 12 }}>
             <MessageCircle size={24} fill="currentColor" />
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 20, color: 'var(--text)' }}>WhatsApp by WA Reach</div>
-            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Read-only overview {status && status.phone_number ? `· +${status.phone_number}` : ''}</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: '#1e293b' }}>WhatsApp by WA Reach</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Read-only overview {status && status.phone_number ? `· +${status.phone_number}` : ''}</div>
           </div>
         </div>
 
         {/* Connection status */}
         <div style={{ ...card, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 12, height: 12, borderRadius: '50%', background: connected ? 'var(--brand)' : 'var(--danger)' }} />
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: connected ? 'var(--primary)' : 'var(--danger)' }} />
             <div>
-              <div style={{ fontWeight: 600, color: 'var(--text)' }}>{connected ? 'Connected' : (status ? status.status : 'Loading…')}</div>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{connected ? `Linked as +${status.phone_number}` : 'Scan the QR to link your WhatsApp number'}</div>
+              <div style={{ fontWeight: 600, color: '#1e293b' }}>{connected ? 'Connected' : (status ? status.status : 'Loading…')}</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>{connected ? `Linked as +${status.phone_number}` : 'Scan the QR to link your WhatsApp number'}</div>
             </div>
           </div>
         </div>
@@ -1413,22 +1383,22 @@ function ClinicDashboard({ ssoToken }) {
         {!connected && qr && (
           <div style={{ ...card, marginBottom: 16, textAlign: 'center' }}>
             <h3 style={{ marginBottom: 8 }}>Link your WhatsApp</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>WhatsApp → Settings → Linked Devices → Link a Device, then scan:</p>
-            <img src={qr} alt="QR" style={{ width: 240, height: 240, border: '1px solid var(--border)', borderRadius: 12 }} />
+            <p style={{ color: '#64748b', fontSize: 14, marginBottom: 16 }}>WhatsApp → Settings → Linked Devices → Link a Device, then scan:</p>
+            <img src={qr} alt="QR" style={{ width: 240, height: 240, border: '1px solid var(--border-color)', borderRadius: 12 }} />
           </div>
         )}
 
         {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
           {[
-            { label: 'Total sent', value: stats.sent || 0, color: 'var(--brand)' },
-            { label: 'Delivered', value: stats.delivered || 0, color: 'var(--info)' },
-            { label: 'Read', value: stats.read || 0, color: 'var(--success)' },
+            { label: 'Total sent', value: stats.sent || 0, color: 'var(--primary)' },
+            { label: 'Delivered', value: stats.delivered || 0, color: '#0ea5e9' },
+            { label: 'Read', value: stats.read || 0, color: '#16a34a' },
             { label: 'Failed', value: stats.failed || 0, color: 'var(--danger)' },
-            { label: 'Today', value: stats.today || 0, color: 'var(--text-muted)' },
+            { label: 'Today', value: stats.today || 0, color: '#64748b' },
           ].map(s => (
             <div key={s.label} style={{ ...card, padding: '16px 18px' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{s.label}</div>
+              <div style={{ fontSize: 12, color: '#64748b' }}>{s.label}</div>
               <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
             </div>
           ))}
@@ -1436,7 +1406,7 @@ function ClinicDashboard({ ssoToken }) {
 
         {/* Message log */}
         <div style={{ ...card, padding: 0 }}>
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--text)' }}>Recent messages</div>
+          <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)', fontWeight: 600, color: '#1e293b' }}>Recent messages</div>
           <div style={{ overflowX: 'auto' }}>
             <table className="logs-table">
               <thead>
@@ -1444,7 +1414,7 @@ function ClinicDashboard({ ssoToken }) {
               </thead>
               <tbody>
                 {messages.length === 0 ? (
-                  <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: 40 }}>No messages yet.</td></tr>
+                  <tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>No messages yet.</td></tr>
                 ) : messages.map(m => (
                   <tr key={m.id}>
                     <td>+{m.to_number}</td>
@@ -1460,7 +1430,7 @@ function ClinicDashboard({ ssoToken }) {
           </div>
         </div>
 
-        <div style={{ textAlign: 'center', color: 'var(--text-faint)', fontSize: 12, marginTop: 16 }}>
+        <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 16 }}>
           Read-only view · powered by WA Reach
         </div>
       </div>
@@ -1549,7 +1519,7 @@ function ContactsView({ token }) {
     finally { setSaving(false); }
   };
 
-  const inputStyle = { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)' };
+  const inputStyle = { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' };
 
   return (
     <div className="view-container">
@@ -1574,7 +1544,7 @@ function ContactsView({ token }) {
         </div>
 
         {banner.text && (
-          <div style={{ margin: '0 0 16px', padding: '12px', background: banner.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)', color: banner.type === 'success' ? 'var(--success)' : 'var(--danger)', borderRadius: '8px' }}>
+          <div style={{ margin: '0 0 16px', padding: '12px', background: banner.type === 'success' ? '#dcfce7' : '#fee2e2', color: banner.type === 'success' ? '#15803d' : '#b91c1c', borderRadius: '8px' }}>
             {banner.text}
           </div>
         )}
@@ -1586,22 +1556,22 @@ function ContactsView({ token }) {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: 40 }}>Loading…</td></tr>
+                <tr><td colSpan={3} style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>Loading…</td></tr>
               ) : contacts.length === 0 ? (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: 40 }}>
+                <tr><td colSpan={3} style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>
                   {search ? 'No contacts match your search.' : 'No contacts yet. Add one or import a list.'}
                 </td></tr>
               ) : contacts.map(c => (
                 <tr key={c.id}>
-                  <td style={{ fontWeight: 500 }}>{c.name || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
+                  <td style={{ fontWeight: 500 }}>{c.name || <span style={{ color: '#94a3b8' }}>—</span>}</td>
                   <td>+{c.phone}</td>
                   <td style={{ textAlign: 'right' }}>
                     <button title="Edit" onClick={() => setModal({ mode: 'edit', id: c.id, name: c.name || '', phone: c.phone })}
-                      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6, color: 'var(--text-muted)' }}>
+                      style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6, color: '#475569' }}>
                       <Pencil size={15} />
                     </button>
                     <button title="Delete" onClick={() => deleteContact(c)}
-                      style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: 6, cursor: 'pointer', color: 'var(--danger)' }}>
+                      style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: 6, cursor: 'pointer', color: 'var(--danger)' }}>
                       <Trash2 size={15} />
                     </button>
                   </td>
@@ -1640,7 +1610,7 @@ function ContactsView({ token }) {
         <div className="modal-overlay" onClick={() => setShowImport(false)}>
           <div className="modal-content" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ marginBottom: 8 }}>Import Contacts</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>
+            <p style={{ color: '#64748b', fontSize: 13, marginBottom: 12 }}>
               Paste one contact per line as <strong>Name, Number</strong> (or just the number). Country code included, e.g. <code>Priya, 919876543210</code>. Duplicates are skipped.
             </p>
             <textarea rows={8} value={importText} onChange={e => setImportText(e.target.value)}
