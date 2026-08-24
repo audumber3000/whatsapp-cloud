@@ -47,9 +47,14 @@ async function main() {
         // ── users -> user + organisation + owner membership ──────────────────
         const users = await sAll('SELECT * FROM users ORDER BY id');
         for (const u of users) {
+            // email and personal_whatsapp_number were comma-joined lists used as
+            // "notify these people"; they are workspace settings, so they move
+            // to the org rather than being dropped.
             const org = await client.query(
-                `INSERT INTO organisations (name, slug) VALUES ($1, $2) RETURNING id`,
-                [u.username || 'Workspace', slugify(u.username, u.id)]
+                `INSERT INTO organisations (name, slug, notify_emails, notify_whatsapp)
+                 VALUES ($1, $2, $3, $4) RETURNING id`,
+                [u.username || 'Workspace', slugify(u.username, u.id),
+                 u.email || null, u.personal_whatsapp_number || null]
             );
             const orgId = org.rows[0].id;
 

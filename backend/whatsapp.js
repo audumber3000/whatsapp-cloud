@@ -25,7 +25,7 @@ const setIo = (socketIo) => {
     // now the cache is the single source of truth and this is the only emitter.
     state.onChange((instanceName, next) => {
         const userId = hooks.userIdFromInstance(instanceName);
-        if (userId == null || Number.isNaN(userId)) return;
+        if (!userId) return;
         emitStatus(userId);
     });
 };
@@ -45,7 +45,9 @@ const emitStatus = (userId) => {
  * so it never blocks on Evolution.
  */
 const getStatus = (userId) => {
-    const s = state.get(hooks.instanceNameForUser(userId));
+    const name = hooks.instanceNameForUser(userId);
+    if (!name) return { isConnected: false, currentQR: '', phone: null };
+    const s = state.get(name);
     return {
         isConnected: s.isConnected,
         currentQR: s.currentQR || '',
@@ -195,8 +197,8 @@ const validateNumbers = async (userId, numbers) => {
             const ok = r.exists === true || r.exists === 'true';
             if (!num) continue;
             db.run(
-                'UPDATE contacts SET wa_valid = ?, wa_checked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND phone = ?',
-                [ok ? 1 : 0, userId, num]
+                'UPDATE contacts SET wa_valid = ?, wa_checked_at = NOW() WHERE org_id = ? AND phone = ?',
+                [!!ok, userId, num]
             );
         }
         return rows;
@@ -263,7 +265,7 @@ hooks.onMessageStatus('user', (userId, messageId, status) => {
     db.run(
         `UPDATE automation_logs
          SET delivery_status = ?,
-             delivered_at = CASE WHEN ? IN ('delivered','read') THEN CURRENT_TIMESTAMP ELSE delivered_at END
+             delivered_at = CASE WHEN ? IN ('delivered','read') THEN NOW() ELSE delivered_at END
          WHERE wa_message_id = ?`,
         [status, status, messageId]
     );

@@ -11,13 +11,13 @@ const runP = (sql, params = []) => new Promise((res, rej) => db.run(sql, params,
 // Look up a stored media attachment by id -> info needed to send it.
 const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
 /**
- * Scoped to the owner on purpose. Without the user_id filter, a reminder or
+ * Scoped to the owner on purpose. Without the org_id filter, a reminder or
  * automation could reference another tenant's attachment id and the scheduler
  * would happily read that file and send it out over WhatsApp.
  */
-function getMediaById(id, userId) {
+function getMediaById(id, orgId) {
     return new Promise((resolve) => {
-        db.get('SELECT * FROM media_attachments WHERE id = ? AND user_id = ?', [id, userId], (e, row) => {
+        db.get('SELECT * FROM media_attachments WHERE id = ? AND org_id = ?', [id, orgId], (e, row) => {
             if (e || !row) return resolve(null);
             resolve({ filePath: path.join(MEDIA_DIR, row.stored_name), mimetype: row.mimetype, filename: row.original_name });
         });
@@ -25,10 +25,10 @@ function getMediaById(id, userId) {
 }
 
 // Helper to log system notifications
-async function logNotification(userId, type, category, recipient, content, status) {
+async function logNotification(orgId, type, category, recipient, content, status) {
     db.run(
-        `INSERT INTO notification_logs (user_id, type, category, recipient, content, status) VALUES (?, ?, ?, ?, ?, ?)`,
-        [userId, type, category, recipient, content, status]
+        `INSERT INTO notification_logs (org_id, type, category, recipient, content, status) VALUES (?, ?, ?, ?, ?, ?)`,
+        [orgId, type, category, recipient, content, status]
     );
 }
 
@@ -44,47 +44,47 @@ const FAIL_THRESHOLD = 3;
 const ALERT_COOLDOWN_MIN = 60;
 const failStreak = new Map();
 
-async function recordSendOutcome(userId, ok) {
-    if (ok) { failStreak.set(userId, 0); return; }
+async function recordSendOutcome(orgId, ok) {
+    if (ok) { failStreak.set(orgId, 0); return; }
 
-    const n = (failStreak.get(userId) || 0) + 1;
-    failStreak.set(userId, n);
+    const n = (failStreak.get(orgId) || 0) + 1;
+    failStreak.set(orgId, n);
     if (n !== FAIL_THRESHOLD) return; // fire once per streak, not every failure
 
     // Don't re-alert about the same thing all night.
     const recent = await new Promise((res) => db.get(
-        `SELECT id FROM health_alerts WHERE user_id = ? AND kind = 'send_failures'
-           AND created_at > datetime('now', ?)`,
-        [userId, `-${ALERT_COOLDOWN_MIN} minutes`], (e, r) => res(r)
+        `SELECT id FROM health_alerts WHERE org_id = ? AND kind = 'send_failures'
+           AND created_at > ?`,
+        [orgId, new Date(Date.now() - ALERT_COOLDOWN_MIN * 60000)], (e, r) => res(r)
     ));
     if (recent) return;
 
     const detail = `${n} consecutive send failures`;
-    db.run('INSERT INTO health_alerts (user_id, kind, detail) VALUES (?, ?, ?)',
-        [userId, 'send_failures', detail]);
+    db.run('INSERT INTO health_alerts (org_id, kind, detail) VALUES (?, ?, ?)',
+        [orgId, 'send_failures', detail]);
 
     const user = await new Promise((res) => db.get(
-        'SELECT username, email FROM users WHERE id = ?', [userId], (e, r) => res(r)));
+        'SELECT username, email FROM users WHERE id = ?', [orgId], (e, r) => res(r)));
 
-    const status = getStatus(userId);
+    const status = getStatus(orgId);
     const cause = status.isConnected
         ? 'WhatsApp still reports connected, so this may be bad numbers or rate limiting.'
         : 'WhatsApp is NOT connected — the phone most likely needs to be linked again.';
 
     const subject = '⚠️ WA Reach: messages are failing';
     const body =
-        `${detail} for account "${user?.username || userId}".\n\n` +
+        `${detail} for account "${user?.username || orgId}".\n\n` +
         `${cause}\n\n` +
         `Nothing further will be delivered until this is fixed. ` +
         `Open WA Reach and check the connection status.`;
 
-    console.error(`[ALERT] user ${userId}: ${detail}. ${cause}`);
-    notifyUser(userId, 'error', `${detail} — check your WhatsApp connection`);
+    console.error(`[ALERT] user ${orgId}: ${detail}. ${cause}`);
+    notifyUser(orgId, 'error', `${detail} — check your WhatsApp connection`);
 
     // Email is the channel that still works when WhatsApp is the thing broken.
     for (const to of String(user?.email || '').split(',').map(e => e.trim()).filter(Boolean)) {
         const sent = await sendEmail(to, subject, body);
-        logNotification(userId, 'email', 'health_alert', to, detail, sent ? 'sent' : 'failed');
+        logNotification(orgId, 'email', 'health_alert', to, detail, sent ? 'sent' : 'failed');
     }
 }
 
@@ -105,7 +105,7 @@ cron.schedule('* * * * *', () => {
 
     // --- standard reminders ---
     db.all(`
-        SELECT reminders.id, reminders.user_id, reminders.message, reminders.media_id, contacts.phone
+        SELECT reminders.id, reminders.org_id, reminders.message, reminders.media_id, contacts.phone
         FROM reminders
         JOIN contacts ON reminders.contact_id = contacts.id
         WHERE reminders.status = 'pending' AND reminders.scheduled_time <= ?
@@ -124,15 +124,15 @@ cron.schedule('* * * * *', () => {
           // the API server, so an uncaught throw here takes the whole app down.
           // A missing import did exactly that on 24 Aug.
           try {
-              const { id, user_id, message, media_id, phone } = row;
+              const { id, org_id, message, media_id, phone } = row;
               let success;
               if (media_id) {
-                  const media = await getMediaById(media_id, user_id);
+                  const media = await getMediaById(media_id, org_id);
                   success = media
-                      ? await sendMedia(user_id, phone, { ...media, caption: message })
-                      : await sendMessage(user_id, phone, message); // attachment gone — send text only
+                      ? await sendMedia(org_id, phone, { ...media, caption: message })
+                      : await sendMessage(org_id, phone, message); // attachment gone — send text only
               } else {
-                  success = await sendMessage(user_id, phone, message);
+                  success = await sendMessage(org_id, phone, message);
               }
               const newStatus = success ? 'sent' : 'failed';
               db.run(`UPDATE reminders SET status = ? WHERE id = ?`, [newStatus, id]);
@@ -146,12 +146,12 @@ cron.schedule('* * * * *', () => {
     // --- advanced automations queue ---
     const currentIsoString = now.toISOString();
     db.all(`
-        SELECT al.id as log_id, al.contact_id, al.automation_id, c.phone, a.user_id, a.message_template, a.status as auto_status, a.active_days, al.sent_time, a.name as auto_name, COALESCE(a.ask_confirmation, 0) as ask_confirmation
+        SELECT al.id as log_id, al.contact_id, al.automation_id, c.phone, a.org_id, a.message_template, a.status as auto_status, a.active_days, al.sent_time, a.name as auto_name, COALESCE(a.ask_confirmation, FALSE) as ask_confirmation
         FROM automation_logs al
         JOIN contacts c ON al.contact_id = c.id
         JOIN automations a ON al.automation_id = a.id
         WHERE al.status = 'pending' AND al.sent_time <= ?
-          AND COALESCE(c.opted_out, 0) = 0
+          AND COALESCE(c.opted_out, FALSE) = FALSE
     `, [currentIsoString], async (err, rows) => {
         if (err) {
             console.error('Error querying automations:', err);
@@ -166,7 +166,7 @@ cron.schedule('* * * * *', () => {
           // Same protection as the reminders loop above: an uncaught throw in
           // here would take the API server down with it.
           try {
-              const { log_id, contact_id, automation_id, phone, user_id, message_template, auto_status, active_days, sent_time, auto_name, ask_confirmation } = row;
+              const { log_id, contact_id, automation_id, phone, org_id, message_template, auto_status, active_days, sent_time, auto_name, ask_confirmation } = row;
               let lastMessageId = null;
             
               let messageBlocks = [];
@@ -196,9 +196,9 @@ cron.schedule('* * * * *', () => {
                   let didSend = false;
                   if (block.media_id) {
                       // Media block: send the attachment with the chosen variation as caption
-                      const media = await getMediaById(block.media_id, user_id);
+                      const media = await getMediaById(block.media_id, org_id);
                       if (media) {
-                          const success = await sendMedia(user_id, phone, { ...media, caption: msgText });
+                          const success = await sendMedia(org_id, phone, { ...media, caption: msgText });
                           if (typeof success === 'string') lastMessageId = success;
                           if (!success) overallSuccess = false;
                           didSend = true;
@@ -208,7 +208,7 @@ cron.schedule('* * * * *', () => {
                   } else if (msgText.trim()) {
                       // "typing…" first — cheap, and it serves the same instinct as
                       // the send jitter and variation rotation: look human.
-                      await showTyping(user_id, phone, 1200).catch(() => {});
+                      await showTyping(org_id, phone, 1200).catch(() => {});
 
                       // When the automation asks for confirmation, the LAST text
                       // block goes out with tappable Confirm / Reschedule / Cancel
@@ -216,12 +216,12 @@ cron.schedule('* * * * *', () => {
                       // reply, so the answer is structured instead of parsed.
                       const isLast = i === messageBlocks.length - 1;
                       const success = (ask_confirmation && isLast)
-                          ? await sendConfirmation(user_id, phone, {
+                          ? await sendConfirmation(org_id, phone, {
                               title: auto_name || 'Appointment',
                               body: msgText,
                               footer: 'Tap an option below',
                             })
-                          : await sendMessage(user_id, phone, msgText);
+                          : await sendMessage(org_id, phone, msgText);
                       if (typeof success === 'string') lastMessageId = success;
                       if (!success) overallSuccess = false;
                       didSend = true;
@@ -247,7 +247,7 @@ cron.schedule('* * * * *', () => {
               db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ?, wa_message_id = ? WHERE id = ?`,
                   [newStatus, logReason, sentContent, (typeof lastMessageId === 'string' ? lastMessageId : null), log_id]);
 
-              recordSendOutcome(user_id, overallSuccess);
+              recordSendOutcome(org_id, overallSuccess);
 
               // Reschedule for tomorrow if the automation is still active
               if (auto_status === 'Active') {
@@ -302,11 +302,12 @@ cron.schedule('* * * * *', () => {
     // --- Daily Campaign Notifications & Summaries ---
     // We check this every minute to see if we should send a START alert or END summary
     db.all(`
-        SELECT a.id, a.user_id, a.name, a.last_summary_sent_date, a.last_start_notified_date,
-               a.start_time, a.end_time, a.timezone_offset, u.personal_whatsapp_number, u.email as user_email
+        SELECT a.id, a.org_id, a.name, a.last_summary_sent_date, a.last_start_notified_date,
+               a.start_time, a.end_time, a.timezone_offset,
+               o.notify_whatsapp AS personal_whatsapp_number, o.notify_emails AS user_email
         FROM automations a
-        JOIN users u ON a.user_id = u.id
-        WHERE a.status = 'Active' AND (u.personal_whatsapp_number IS NOT NULL OR u.email IS NOT NULL)
+        JOIN organisations o ON o.id = a.org_id
+        WHERE a.status = 'Active' AND (o.notify_whatsapp IS NOT NULL OR o.notify_emails IS NOT NULL)
     `, async (err, automations) => {
         if (err) return console.error('Error querying for notifications:', err);
         
@@ -347,8 +348,8 @@ cron.schedule('* * * * *', () => {
                                 if (auto.personal_whatsapp_number) {
                                     const numbers = auto.personal_whatsapp_number.split(',').map(n => n.trim()).filter(Boolean);
                                     for (const num of numbers) {
-                                        const waSuccess = await sendMessage(auto.user_id, num, startMsg);
-                                        logNotification(auto.user_id, 'whatsapp', 'start_alert', num, startMsg, waSuccess ? 'sent' : 'failed');
+                                        const waSuccess = await sendMessage(auto.org_id, num, startMsg);
+                                        logNotification(auto.org_id, 'whatsapp', 'start_alert', num, startMsg, waSuccess ? 'sent' : 'failed');
                                     }
                                 }
                                 
@@ -357,11 +358,11 @@ cron.schedule('* * * * *', () => {
                                     const emails = auto.user_email.split(',').map(e => e.trim()).filter(Boolean);
                                     for (const e of emails) {
                                         const emailSuccess = await sendEmail(e, `🚀 Automation Starting: ${auto.name}`, startMsg);
-                                        logNotification(auto.user_id, 'email', 'start_alert', e, startMsg, emailSuccess ? 'sent' : 'failed');
+                                        logNotification(auto.org_id, 'email', 'start_alert', e, startMsg, emailSuccess ? 'sent' : 'failed');
                                     }
                                 }
 
-                                notifyUser(auto.user_id, 'info', `Started automation "${auto.name}"`);
+                                notifyUser(auto.org_id, 'info', `Started automation "${auto.name}"`);
                             }
                         });
                     }
@@ -383,8 +384,8 @@ cron.schedule('* * * * *', () => {
                                 if (auto.personal_whatsapp_number) {
                                     const numbers = auto.personal_whatsapp_number.split(',').map(n => n.trim()).filter(Boolean);
                                     for (const num of numbers) {
-                                        const waSuccess = await sendMessage(auto.user_id, num, summaryMsg);
-                                        logNotification(auto.user_id, 'whatsapp', 'daily_summary', num, summaryMsg, waSuccess ? 'sent' : 'failed');
+                                        const waSuccess = await sendMessage(auto.org_id, num, summaryMsg);
+                                        logNotification(auto.org_id, 'whatsapp', 'daily_summary', num, summaryMsg, waSuccess ? 'sent' : 'failed');
                                     }
                                 }
                                 
@@ -393,11 +394,11 @@ cron.schedule('* * * * *', () => {
                                     const emails = auto.user_email.split(',').map(e => e.trim()).filter(Boolean);
                                     for (const e of emails) {
                                         const emailSuccess = await sendEmail(e, `🏁 Daily Summary: ${auto.name}`, summaryMsg);
-                                        logNotification(auto.user_id, 'email', 'daily_summary', e, summaryMsg, emailSuccess ? 'sent' : 'failed');
+                                        logNotification(auto.org_id, 'email', 'daily_summary', e, summaryMsg, emailSuccess ? 'sent' : 'failed');
                                     }
                                 }
 
-                                notifyUser(auto.user_id, 'success', `Sent summary for "${auto.name}"`);
+                                notifyUser(auto.org_id, 'success', `Sent summary for "${auto.name}"`);
                             }
                         });
                     });

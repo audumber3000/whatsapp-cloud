@@ -70,10 +70,15 @@ function clearReArm(instance) {
     reArm.delete(instance);
 }
 
-function instanceNameForUser(userId) { return `${USER_PREFIX}${userId}`; }
+const orgInstances = require('../orgInstances');
+
+// Names are looked up, not computed: existing Evolution instances are still
+// named after the pre-migration integer ids, so deriving a name from a UUID
+// would point every org at an instance that does not exist.
+function instanceNameForUser(orgId) { return orgInstances.nameFor(orgId); }
 function instanceNameForSession(sessionId) { return `${API_PREFIX}${sessionId}`; }
 function userIdFromInstance(name) {
-    return name.startsWith(USER_PREFIX) ? Number(name.slice(USER_PREFIX.length)) : null;
+    return orgInstances.orgFor(name);
 }
 function sessionIdFromInstance(name) {
     return name.startsWith(API_PREFIX) ? name.slice(API_PREFIX.length) : null;
@@ -186,7 +191,7 @@ function handleEvent(body) {
             for (const msg of msgs) {
                 if (!msg || msg.key?.fromMe) continue;
                 const userId = userIdFromInstance(instance);
-                if (userId == null || Number.isNaN(userId)) continue;
+                if (!userId) continue;
                 try {
                     inboundHandler?.(userId, instance, normalizeInbound(msg));
                 } catch (e) {

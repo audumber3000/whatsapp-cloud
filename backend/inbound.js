@@ -90,13 +90,13 @@ async function handle(userId, instance, msg) {
     const intent = detectIntent(msg);
 
     let contact = await dbGet(
-        'SELECT id, name, opted_out FROM contacts WHERE user_id = ? AND phone = ?',
+        'SELECT id, name, opted_out FROM contacts WHERE org_id = ? AND phone = ?',
         [userId, msg.from]
     );
     // Someone messaging in who isn't on the list is still worth capturing.
     if (!contact) {
         const r = await dbRun(
-            'INSERT OR IGNORE INTO contacts (user_id, name, phone) VALUES (?, ?, ?)',
+            'INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?) ON CONFLICT (org_id, phone) DO NOTHING',
             [userId, 'Unknown', msg.from]
         ).catch(() => null);
         if (r && r.lastID) contact = { id: r.lastID, name: 'Unknown', opted_out: 0 };
@@ -106,9 +106,10 @@ async function handle(userId, instance, msg) {
     if (msg.mediaType) mediaPath = await saveInboundMedia(instance, msg);
 
     await dbRun(
-        `INSERT OR IGNORE INTO inbound_messages
-         (user_id, contact_id, from_number, wa_message_id, body, media_type, media_path, intent)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO inbound_messages
+         (org_id, contact_id, from_number, wa_message_id, body, media_type, media_path, intent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (wa_message_id) DO NOTHING`,
         [userId, contact?.id || null, msg.from, msg.messageId, msg.text || '',
          msg.mediaType || null, mediaPath, intent]
     ).catch((e) => console.error('[inbound] insert failed:', e.message));
@@ -116,7 +117,7 @@ async function handle(userId, instance, msg) {
     // Opt-out is a hard stop — honour it immediately and permanently.
     if (intent === 'opt_out' && contact) {
         await dbRun(
-            'UPDATE contacts SET opted_out = 1, opted_out_at = CURRENT_TIMESTAMP WHERE id = ?',
+            'UPDATE contacts SET opted_out = TRUE, opted_out_at = NOW() WHERE id = ?',
             [contact.id]
         ).catch(() => {});
         // Cancel anything already queued for them.
@@ -133,7 +134,7 @@ async function handle(userId, instance, msg) {
     // message actually delivered to this contact.
     if (['confirm', 'reschedule', 'cancel'].includes(intent) && contact) {
         await dbRun(
-            `UPDATE automation_logs SET response = ?, responded_at = CURRENT_TIMESTAMP
+            `UPDATE automation_logs SET response = ?, responded_at = NOW()
              WHERE id = (
                 SELECT id FROM automation_logs
                 WHERE contact_id = ? AND status IN ('delivered','sent','read')

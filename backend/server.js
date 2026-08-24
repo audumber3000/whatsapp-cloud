@@ -103,6 +103,10 @@ const authenticateToken = (req, res, next) => {
         if (err) return res.sendStatus(403);
         // Clinic SSO tokens are read-only and must not access user routes.
         if (!user || user.scope === 'clinic' || !user.id) return res.sendStatus(403);
+        // Tokens issued before the org migration have no org_id. Rejecting them
+        // is deliberate: a query that falls through unscoped would read across
+        // tenants, so a stale token must re-authenticate rather than degrade.
+        if (!user.org_id) return res.status(401).json({ error: 'Session out of date — please sign in again' });
         req.user = user;
         next();
     });
@@ -114,13 +118,25 @@ app.post('/api/signup', throttleAuth, async (req, res) => {
         const { username, password } = req.body;
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        db.run('INSERT INTO users (username, password) VALUES (?, ?)', [username, hashedPassword], function (err) {
-            if (err) {
-                if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username already exists' });
-                return res.status(500).json({ error: err.message });
-            }
-            res.status(201).json({ message: 'User created successfully' });
-        });
+        // Signing up creates a workspace and makes you its owner — everything
+        // owned (contacts, automations, keys) belongs to the org, not to you.
+        try {
+            const slugBase = String(username).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workspace';
+            const created = await db.tx(async (t) => {
+                const existing = await t.one('SELECT id FROM users WHERE username = ?', [username]);
+                if (existing) return null;
+                const u = await t.one('INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id', [username, hashedPassword]);
+                const o = await t.one('INSERT INTO organisations (name, slug) VALUES (?, ?) RETURNING id',
+                    [username, `${slugBase}-${Date.now().toString(36)}`]);
+                await t.query('INSERT INTO memberships (org_id, user_id, role) VALUES (?, ?, \'owner\')', [o.id, u.id]);
+                await t.query('INSERT INTO wa_instances (org_id, instance_name) VALUES (?, ?)', [o.id, `wareach_org_${o.id}`]);
+                return { userId: u.id, orgId: o.id };
+            });
+            if (!created) return res.status(400).json({ error: 'Username already exists' });
+            return res.status(201).json({ message: 'User created successfully' });
+        } catch (e) {
+            return res.status(500).json({ error: 'Could not create account' });
+        }
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -136,11 +152,30 @@ app.post('/api/login', throttleAuth, (req, res) => {
         if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
         try {
-            if (await bcrypt.compare(password, user.password)) {
-                whatsappClient.initializeUserClient(user.id);
+            if (await bcrypt.compare(password, user.password_hash)) {
+                // Everything owned now belongs to an organisation, so the token
+                // carries which org this session is acting in, plus the role.
+                const m = await db.one(
+                    `SELECT m.org_id, m.role, o.name AS org_name, o.slug AS org_slug
+                       FROM memberships m JOIN organisations o ON o.id = m.org_id
+                      WHERE m.user_id = $1 AND m.status = 'active'
+                      ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END
+                      LIMIT 1`, [user.id]);
+                if (!m) return res.status(403).json({ error: 'This account is not a member of any workspace' });
+
+                db.run('UPDATE users SET last_login_at = NOW(), last_login_ip = ? WHERE id = ?',
+                    [req.ip || null, user.id], () => {});
+
+                whatsappClient.initializeUserClient(m.org_id);
                 clearAuthAttempts(req);
-                const accessToken = jwt.sign({ username: user.username, id: user.id }, JWT_SECRET, { expiresIn: config.jwtExpiresIn });
-                res.json({ accessToken });
+                const accessToken = jwt.sign(
+                    { username: user.username, id: user.id, org_id: m.org_id, role: m.role },
+                    JWT_SECRET, { expiresIn: config.jwtExpiresIn });
+                res.json({
+                    accessToken,
+                    user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email },
+                    org: { id: m.org_id, name: m.org_name, slug: m.org_slug, role: m.role },
+                });
             } else {
                 res.status(401).json({ error: 'Invalid credentials' });
             }
@@ -192,11 +227,12 @@ const authenticateMasterAdmin = (req, res, next) => {
 
 app.get('/api/admin/dashboard', authenticateMasterAdmin, (req, res) => {
     db.all(`
-        SELECT u.id, u.username, u.email, u.personal_whatsapp_number,
+        SELECT u.id, u.username, u.email,
                COUNT(DISTINCT a.id) as total_automations,
                COUNT(DISTINCT al.id) as total_messages
         FROM users u
-        LEFT JOIN automations a ON u.id = a.user_id AND a.status != 'Deleted'
+        LEFT JOIN memberships mem ON mem.user_id = u.id
+        LEFT JOIN automations a ON a.org_id = mem.org_id AND a.status != 'Deleted'
         LEFT JOIN automation_logs al ON a.id = al.automation_id AND al.status IN ('delivered', 'read', 'sent')
         GROUP BY u.id
     `, [], (err, rows) => {
@@ -216,7 +252,7 @@ app.get('/api/admin/dashboard', authenticateMasterAdmin, (req, res) => {
 
 // Settings Endpoints
 app.get('/api/settings', authenticateToken, (req, res) => {
-    db.get('SELECT email, personal_whatsapp_number FROM users WHERE id = ?', [req.user.id], (err, row) => {
+    db.get('SELECT notify_emails AS email, notify_whatsapp AS personal_whatsapp_number FROM organisations WHERE id = ?', [req.user.org_id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(row || { email: '', personal_whatsapp_number: '' });
     });
@@ -229,14 +265,14 @@ app.put('/api/settings', authenticateToken, (req, res) => {
     const cleanEmail = email ? email.split(',').map(e => e.trim()).filter(Boolean).join(',') : '';
     const cleanPhone = personal_whatsapp_number ? personal_whatsapp_number.split(',').map(p => p.trim()).filter(Boolean).join(',') : '';
 
-    db.run(`UPDATE users SET email = ?, personal_whatsapp_number = ? WHERE id = ?`, [cleanEmail, cleanPhone, req.user.id], (err) => {
+    db.run(`UPDATE organisations SET notify_emails = ?, notify_whatsapp = ? WHERE id = ?`, [cleanEmail, cleanPhone, req.user.org_id], (err) => {
         if (err) return res.status(500).json({ error: 'Failed to update settings' });
         res.json({ message: 'Settings updated successfully' });
     });
 });
 
 app.get('/api/notifications/logs', authenticateToken, (req, res) => {
-    db.all('SELECT * FROM notification_logs WHERE user_id = ? ORDER BY sent_at DESC LIMIT 50', [req.user.id], (err, rows) => {
+    db.all('SELECT * FROM notification_logs WHERE org_id = ? ORDER BY sent_at DESC LIMIT 50', [req.user.org_id], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
@@ -248,8 +284,8 @@ app.post('/api/media', authenticateToken, (req, res) => {
         if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File too large (max 20MB)' : err.message });
         if (!req.file) return res.status(400).json({ error: 'No file, or unsupported type (allowed: image, video, audio, PDF)' });
         db.run(
-            `INSERT INTO media_attachments (user_id, original_name, stored_name, mimetype, size) VALUES (?, ?, ?, ?, ?)`,
-            [req.user.id, req.file.originalname, req.file.filename, req.file.mimetype, req.file.size],
+            `INSERT INTO media_attachments (org_id, uploaded_by, original_name, stored_name, mimetype, size) VALUES (?, ?, ?, ?, ?, ?)`,
+            [req.user.org_id, req.user.id, req.file.originalname, req.file.filename, req.file.mimetype, req.file.size],
             function (dbErr) {
                 if (dbErr) {
                     fs.unlink(path.join(MEDIA_DIR, req.file.filename), () => {});
@@ -263,7 +299,7 @@ app.post('/api/media', authenticateToken, (req, res) => {
 
 // Stream a media file back (owner only) — used for thumbnails/preview in the UI.
 app.get('/api/media/:id', authenticateToken, (req, res) => {
-    db.get('SELECT * FROM media_attachments WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], (err, row) => {
+    db.get('SELECT * FROM media_attachments WHERE id = ? AND org_id = ?', [req.params.id, req.user.org_id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.status(404).json({ error: 'Not found' });
         const filePath = path.join(MEDIA_DIR, row.stored_name);
@@ -278,7 +314,7 @@ app.get('/api/media/:id', authenticateToken, (req, res) => {
 });
 
 app.delete('/api/media/:id', authenticateToken, (req, res) => {
-    db.get('SELECT * FROM media_attachments WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], (err, row) => {
+    db.get('SELECT * FROM media_attachments WHERE id = ? AND org_id = ?', [req.params.id, req.user.org_id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.status(404).json({ error: 'Not found' });
         fs.unlink(path.join(MEDIA_DIR, row.stored_name), () => {});
@@ -288,14 +324,14 @@ app.delete('/api/media/:id', authenticateToken, (req, res) => {
 
 // --- API Endpoints ---
 app.get('/api/wa/status', authenticateToken, (req, res) => {
-    const status = whatsappClient.getStatus(req.user.id);
-    console.log(`WA Status requested for user ${req.user.id}. isConnected:`, status.isConnected, 'QR length:', status.currentQR ? status.currentQR.length : 0);
+    const status = whatsappClient.getStatus(req.user.org_id);
+    console.log(`WA Status requested for user ${req.user.org_id}. isConnected:`, status.isConnected, 'QR length:', status.currentQR ? status.currentQR.length : 0);
     res.json(status);
 });
 
 app.post('/api/wa/disconnect', authenticateToken, async (req, res) => {
     try {
-        const success = await whatsappClient.disconnectClient(req.user.id);
+        const success = await whatsappClient.disconnectClient(req.user.org_id);
         if (success) {
             res.json({ message: 'WhatsApp disconnected successfully. A new QR code will be generated.' });
         } else {
@@ -309,13 +345,13 @@ app.post('/api/wa/disconnect', authenticateToken, async (req, res) => {
 // Get all contacts (optional ?search= over name/phone)
 app.get('/api/contacts', authenticateToken, (req, res) => {
     const search = (req.query.search || '').trim();
-    let sql = 'SELECT * FROM contacts WHERE user_id = ?';
-    const params = [req.user.id];
+    let sql = 'SELECT * FROM contacts WHERE org_id = ?';
+    const params = [req.user.org_id];
     if (search) {
         sql += ' AND (name LIKE ? OR phone LIKE ?)';
         params.push(`%${search}%`, `%${search}%`);
     }
-    sql += ' ORDER BY name COLLATE NOCASE ASC';
+    sql += ' ORDER BY lower(name) ASC';
     db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
@@ -329,7 +365,7 @@ app.post('/api/contacts', authenticateToken, (req, res) => {
     const name = (req.body.name || '').trim();
     const phone = cleanPhone(req.body.phone);
     if (!phone) return res.status(400).json({ error: 'A valid phone number is required' });
-    db.run('INSERT INTO contacts (user_id, name, phone) VALUES (?, ?, ?)', [req.user.id, name, phone], function (err) {
+    db.run('INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?)', [req.user.org_id, name, phone], function (err) {
         if (err) {
             if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Contact already exists for this user' });
             return res.status(500).json({ error: err.message });
@@ -343,8 +379,8 @@ app.put('/api/contacts/:id', authenticateToken, (req, res) => {
     const name = (req.body.name || '').trim();
     const phone = cleanPhone(req.body.phone);
     if (!phone) return res.status(400).json({ error: 'A valid phone number is required' });
-    db.run('UPDATE contacts SET name = ?, phone = ? WHERE id = ? AND user_id = ?',
-        [name, phone, req.params.id, req.user.id], function (err) {
+    db.run('UPDATE contacts SET name = ?, phone = ? WHERE id = ? AND org_id = ?',
+        [name, phone, req.params.id, req.user.org_id], function (err) {
             if (err) {
                 if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Another contact already uses this number' });
                 return res.status(500).json({ error: err.message });
@@ -356,7 +392,7 @@ app.put('/api/contacts/:id', authenticateToken, (req, res) => {
 
 // Delete a contact
 app.delete('/api/contacts/:id', authenticateToken, (req, res) => {
-    db.run('DELETE FROM contacts WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], function (err) {
+    db.run('DELETE FROM contacts WHERE id = ? AND org_id = ?', [req.params.id, req.user.org_id], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
         res.json({ message: 'Deleted' });
@@ -374,8 +410,8 @@ app.post('/api/contacts/bulk', authenticateToken, (req, res) => {
         const phone = cleanPhone(c.phone);
         const name = (c.name || '').trim();
         if (!phone) { skipped++; return done(); }
-        db.run('INSERT OR IGNORE INTO contacts (user_id, name, phone) VALUES (?, ?, ?)',
-            [req.user.id, name, phone], function (err) {
+        db.run('INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?) ON CONFLICT (org_id, phone) DO NOTHING',
+            [req.user.org_id, name, phone], function (err) {
                 if (!err && this.changes > 0) added++; else skipped++;
                 done();
             });
@@ -388,9 +424,9 @@ app.get('/api/reminders', authenticateToken, (req, res) => {
     SELECT reminders.*, contacts.name, contacts.phone 
     FROM reminders 
     LEFT JOIN contacts ON reminders.contact_id = contacts.id
-    WHERE reminders.user_id = ?
+    WHERE reminders.org_id = ?
     ORDER BY scheduled_time ASC
-  `, [req.user.id], (err, rows) => {
+  `, [req.user.org_id], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
@@ -400,12 +436,12 @@ app.get('/api/reminders', authenticateToken, (req, res) => {
 app.post('/api/reminders', authenticateToken, (req, res) => {
     const { contact_id, message, scheduled_time, media_id } = req.body;
     // Ensure contact exists for this user
-    db.get('SELECT id FROM contacts WHERE id = ? AND user_id = ?', [contact_id, req.user.id], (errC, row) => {
+    db.get('SELECT id FROM contacts WHERE id = ? AND org_id = ?', [contact_id, req.user.org_id], (errC, row) => {
         if (errC || !row) return res.status(400).json({ error: 'Invalid contact' });
 
         const insert = () => {
-            db.run(`INSERT INTO reminders (user_id, contact_id, message, scheduled_time, status, media_id) VALUES (?, ?, ?, ?, 'pending', ?)`,
-                [req.user.id, contact_id, message, scheduled_time, media_id || null],
+            db.run(`INSERT INTO reminders (org_id, contact_id, message, scheduled_time, status, media_id) VALUES (?, ?, ?, ?, 'pending', ?)`,
+                [req.user.org_id, contact_id, message, scheduled_time, media_id || null],
                 function (err) {
                     if (err) return res.status(500).json({ error: 'Could not create reminder' });
                     res.json({ id: this.lastID, contact_id, message, scheduled_time, status: 'pending', media_id: media_id || null });
@@ -416,8 +452,8 @@ app.post('/api/reminders', authenticateToken, (req, res) => {
         // letting a reminder point at another tenant's attachment — which the
         // scheduler would then read and send out over WhatsApp.
         if (!media_id) return insert();
-        db.get('SELECT id FROM media_attachments WHERE id = ? AND user_id = ?',
-            [media_id, req.user.id], (eM, mRow) => {
+        db.get('SELECT id FROM media_attachments WHERE id = ? AND org_id = ?',
+            [media_id, req.user.org_id], (eM, mRow) => {
                 if (eM || !mRow) return res.status(400).json({ error: 'Unknown attachment' });
                 insert();
             });
@@ -429,28 +465,39 @@ app.post('/api/reminders', authenticateToken, (req, res) => {
 
 // Conversation list: one row per contact, newest first, with unread counts.
 app.get('/api/inbox', authenticateToken, (req, res) => {
+    // One row per conversation. Rewritten for Postgres, which (correctly)
+    // rejects selecting columns that are neither grouped nor aggregated —
+    // SQLite silently picked an arbitrary row. DISTINCT ON gives the newest
+    // message per number deterministically, and the aggregates are joined on.
     db.all(`
-        SELECT im.contact_id,
+        WITH latest AS (
+            SELECT DISTINCT ON (im.from_number)
+                   im.from_number, im.contact_id, im.body AS last_body,
+                   im.intent AS last_intent, im.received_at AS last_at
+              FROM inbound_messages im
+             WHERE im.org_id = ?
+             ORDER BY im.from_number, im.received_at DESC
+        ),
+        totals AS (
+            SELECT from_number,
+                   COUNT(*)::int AS total,
+                   COUNT(*) FILTER (WHERE is_read = FALSE)::int AS unread
+              FROM inbound_messages
+             WHERE org_id = ?
+             GROUP BY from_number
+        )
+        SELECT l.contact_id,
                COALESCE(c.name, 'Unknown') AS name,
-               im.from_number,
-               COUNT(*) AS total,
-               SUM(CASE WHEN im.is_read = 0 THEN 1 ELSE 0 END) AS unread,
-               MAX(im.received_at) AS last_at,
-               (SELECT body FROM inbound_messages x
-                 WHERE x.user_id = im.user_id AND x.from_number = im.from_number
-                 ORDER BY x.received_at DESC LIMIT 1) AS last_body,
-               (SELECT intent FROM inbound_messages x
-                 WHERE x.user_id = im.user_id AND x.from_number = im.from_number
-                 ORDER BY x.received_at DESC LIMIT 1) AS last_intent,
-               COALESCE(c.opted_out, 0) AS opted_out
-        FROM inbound_messages im
-        LEFT JOIN contacts c ON c.id = im.contact_id
-        WHERE im.user_id = ?
-        GROUP BY im.from_number
-        ORDER BY last_at DESC
-        LIMIT 100
-    `, [req.user.id], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+               l.from_number, l.last_body, l.last_intent, l.last_at,
+               t.total, t.unread,
+               COALESCE(c.opted_out, FALSE) AS opted_out
+          FROM latest l
+          JOIN totals t ON t.from_number = l.from_number
+          LEFT JOIN contacts c ON c.id = l.contact_id
+         ORDER BY l.last_at DESC
+         LIMIT 100
+    `, [req.user.org_id, req.user.org_id], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Could not load conversations' });
         res.json(rows || []);
     });
 });
@@ -460,19 +507,19 @@ app.get('/api/inbox/:number', authenticateToken, (req, res) => {
     const num = String(req.params.number).replace(/\D/g, '');
     db.all(
         `SELECT id, body, media_type, media_path, intent, received_at, 'in' AS direction
-           FROM inbound_messages WHERE user_id = ? AND from_number = ?
+           FROM inbound_messages WHERE org_id = ? AND from_number = ?
          UNION ALL
          SELECT al.id, al.content AS body, NULL, NULL,
                 al.response AS intent, al.sent_time AS received_at, 'out' AS direction
            FROM automation_logs al
            JOIN contacts c ON c.id = al.contact_id
-          WHERE c.user_id = ? AND c.phone = ? AND al.status IN ('delivered','sent','read','failed')
+          WHERE c.org_id = ? AND c.phone = ? AND al.status IN ('delivered','sent','read','failed')
          ORDER BY received_at ASC LIMIT 200`,
-        [req.user.id, num, req.user.id, num],
+        [req.user.org_id, num, req.user.org_id, num],
         (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
-            db.run('UPDATE inbound_messages SET is_read = 1 WHERE user_id = ? AND from_number = ?',
-                [req.user.id, num]);
+            db.run('UPDATE inbound_messages SET is_read = TRUE WHERE org_id = ? AND from_number = ?',
+                [req.user.org_id, num]);
             res.json(rows || []);
         }
     );
@@ -484,8 +531,8 @@ app.post('/api/inbox/:number/reply', authenticateToken, async (req, res) => {
     const { text } = req.body || {};
     if (!text || !text.trim()) return res.status(400).json({ error: 'Message text required' });
 
-    await whatsappClient.showTyping(req.user.id, num, 1200).catch(() => {});
-    const ok = await whatsappClient.sendMessage(req.user.id, num, text.trim());
+    await whatsappClient.showTyping(req.user.org_id, num, 1200).catch(() => {});
+    const ok = await whatsappClient.sendMessage(req.user.org_id, num, text.trim());
     if (!ok) return res.status(409).json({ error: 'WhatsApp is not connected' });
     res.json({ success: true, message_id: typeof ok === 'string' ? ok : null });
 });
@@ -494,16 +541,16 @@ app.post('/api/inbox/:number/reply', authenticateToken, async (req, res) => {
 
 // Ask WhatsApp which of these numbers actually exist before we burn sends on them.
 app.post('/api/contacts/validate', authenticateToken, async (req, res) => {
-    db.all('SELECT phone FROM contacts WHERE user_id = ?', [req.user.id], async (err, rows) => {
+    db.all('SELECT phone FROM contacts WHERE org_id = ?', [req.user.org_id], async (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         const numbers = (rows || []).map(r => r.phone).filter(Boolean);
         if (!numbers.length) return res.json({ checked: 0, invalid: 0 });
 
-        const result = await whatsappClient.validateNumbers(req.user.id, numbers);
+        const result = await whatsappClient.validateNumbers(req.user.org_id, numbers);
         if (!result) return res.status(409).json({ error: 'WhatsApp is not connected' });
 
-        db.get('SELECT COUNT(*) AS n FROM contacts WHERE user_id = ? AND wa_valid = 0',
-            [req.user.id], (e2, row) => {
+        db.get('SELECT COUNT(*) AS n FROM contacts WHERE org_id = ? AND wa_valid = FALSE',
+            [req.user.org_id], (e2, row) => {
                 res.json({ checked: numbers.length, invalid: row ? row.n : 0 });
             });
     });
@@ -511,11 +558,11 @@ app.post('/api/contacts/validate', authenticateToken, async (req, res) => {
 
 // Manual opt-out toggle, for when someone asks the front desk directly.
 app.patch('/api/contacts/:id/optout', authenticateToken, (req, res) => {
-    const optOut = req.body?.opted_out ? 1 : 0;
+    const optOut = !!req.body?.opted_out;
     db.run(
-        `UPDATE contacts SET opted_out = ?, opted_out_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END
-         WHERE id = ? AND user_id = ?`,
-        [optOut, optOut, req.params.id, req.user.id],
+        `UPDATE contacts SET opted_out = ?, opted_out_at = CASE WHEN ? THEN NOW() ELSE NULL END
+         WHERE id = ? AND org_id = ?`,
+        [optOut, optOut, req.params.id, req.user.org_id],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
             if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
@@ -531,7 +578,14 @@ app.patch('/api/contacts/:id/optout', authenticateToken, (req, res) => {
 // Today's confirmation picture — the thing a front desk actually wants at
 // 9am: who is coming, who moved, who dropped out, and who never answered.
 app.get('/api/dashboard/responses', authenticateToken, (req, res) => {
-    const since = req.query.since || 'start of day';
+    // Was a SQLite datetime() modifier string ('start of day', '-2 hours').
+    // Resolved here so the query is plain SQL and the value is a real timestamp.
+    const rawSince = req.query.since || 'start of day';
+    const sinceTs = (() => {
+        const m = /^-(\d+)\s*(minute|hour|day)s?$/.exec(rawSince);
+        if (m) return new Date(Date.now() - Number(m[1]) * { minute: 6e4, hour: 36e5, day: 864e5 }[m[2]]);
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d;   // start of day
+    })();
     db.all(`
         SELECT
           SUM(CASE WHEN al.response = 'confirm'    THEN 1 ELSE 0 END) AS confirmed,
@@ -541,10 +595,10 @@ app.get('/api/dashboard/responses', authenticateToken, (req, res) => {
           COUNT(*) AS total
         FROM automation_logs al
         JOIN automations a ON a.id = al.automation_id
-        WHERE a.user_id = ?
+        WHERE a.org_id = ?
           AND al.status IN ('delivered','sent','read')
-          AND al.sent_time >= datetime('now', ?)
-    `, [req.user.id, since === 'start of day' ? 'start of day' : since], (err, rows) => {
+          AND al.sent_time >= $2
+    `, [req.user.org_id, sinceTs], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         const r = (rows && rows[0]) || {};
         const summary = {
@@ -561,10 +615,10 @@ app.get('/api/dashboard/responses', authenticateToken, (req, res) => {
             FROM automation_logs al
             JOIN automations a ON a.id = al.automation_id
             LEFT JOIN contacts c ON c.id = al.contact_id
-            WHERE a.user_id = ? AND al.response IS NOT NULL
-              AND al.sent_time >= datetime('now', 'start of day')
+            WHERE a.org_id = ? AND al.response IS NOT NULL
+              AND al.sent_time >= date_trunc('day', NOW())
             ORDER BY al.responded_at DESC LIMIT 50
-        `, [req.user.id], (e2, detail) => {
+        `, [req.user.org_id], (e2, detail) => {
             res.json({ ...summary, responses: detail || [] });
         });
     });
@@ -580,7 +634,7 @@ app.get('/api/feed', authenticateToken, (req, res) => {
                im.body AS text, im.intent AS detail, NULL AS status
           FROM inbound_messages im
           LEFT JOIN contacts c ON c.id = im.contact_id
-         WHERE im.user_id = ?
+         WHERE im.org_id = ?
         UNION ALL
         SELECT 'outbound' AS kind, al.sent_time AS at,
                COALESCE(c.name, 'Unknown') AS who, c.phone AS phone,
@@ -588,10 +642,10 @@ app.get('/api/feed', authenticateToken, (req, res) => {
           FROM automation_logs al
           JOIN automations a ON a.id = al.automation_id
           LEFT JOIN contacts c ON c.id = al.contact_id
-         WHERE a.user_id = ? AND al.status != 'pending'
+         WHERE a.org_id = ? AND al.status != 'pending'
         ORDER BY at DESC
         LIMIT ?
-    `, [req.user.id, req.user.id, limit], (err, rows) => {
+    `, [req.user.org_id, req.user.org_id, limit], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows || []);
     });
@@ -600,16 +654,24 @@ app.get('/api/feed', authenticateToken, (req, res) => {
 // --- API key management (dashboard-authenticated) ---
 
 app.get('/api/apikey', authenticateToken, (req, res) => {
-    db.get('SELECT api_key, api_key_created_at FROM users WHERE id = ?', [req.user.id], (err, row) => {
+    db.get(`SELECT key_prefix, name, created_at, last_used_at FROM api_keys
+             WHERE org_id = ? AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+        [req.user.org_id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ api_key: row?.api_key || null, created_at: row?.api_key_created_at || null });
+        // The raw key is only ever shown once, at creation. Afterwards only
+        // the prefix exists, because the rest is stored hashed.
+        res.json(row
+            ? { api_key: null, key_prefix: row.key_prefix, name: row.name, created_at: row.created_at, last_used_at: row.last_used_at }
+            : { api_key: null, key_prefix: null, created_at: null });
     });
 });
 
 // Also used to rotate: issuing a new key immediately invalidates the old one.
 app.post('/api/apikey', authenticateToken, async (req, res) => {
     try {
-        const key = await publicApi.issueKey(req.user.id);
+        // Issuing a new key revokes the old one, as before.
+        await db.query('UPDATE api_keys SET revoked_at = NOW() WHERE org_id = ? AND revoked_at IS NULL', [req.user.org_id]);
+        const key = await publicApi.issueKey(req.user.org_id, { createdBy: req.user.id });
         res.json({ api_key: key, created_at: new Date().toISOString() });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -617,7 +679,7 @@ app.post('/api/apikey', authenticateToken, async (req, res) => {
 });
 
 app.delete('/api/apikey', authenticateToken, (req, res) => {
-    db.run('UPDATE users SET api_key = NULL, api_key_created_at = NULL WHERE id = ?', [req.user.id], (err) => {
+    db.run('UPDATE api_keys SET revoked_at = NOW() WHERE org_id = ? AND revoked_at IS NULL', [req.user.org_id], (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
     });
@@ -625,8 +687,8 @@ app.delete('/api/apikey', authenticateToken, (req, res) => {
 
 // --- Health ---
 app.get('/api/health/alerts', authenticateToken, (req, res) => {
-    db.all('SELECT kind, detail, created_at FROM health_alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
-        [req.user.id], (err, rows) => {
+    db.all('SELECT kind, detail, created_at FROM health_alerts WHERE org_id = ? ORDER BY created_at DESC LIMIT 20',
+        [req.user.org_id], (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json(rows || []);
         });
@@ -634,15 +696,15 @@ app.get('/api/health/alerts', authenticateToken, (req, res) => {
 
 // --- Dashboard & Meta Endpoints ---
 app.get('/api/dashboard/stats', authenticateToken, (req, res) => {
-    const stats = { sent: 0, failed: 0, activeAutomations: 0, phone: whatsappClient.getStatus(req.user.id).phone };
+    const stats = { sent: 0, failed: 0, activeAutomations: 0, phone: whatsappClient.getStatus(req.user.org_id).phone };
     
-    db.get(`SELECT COUNT(*) as count FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE a.user_id = ? AND (al.status = 'delivered' OR al.status = 'read' OR al.status = 'sent')`, [req.user.id], (err, row) => {
+    db.get(`SELECT COUNT(*) as count FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE a.org_id = ? AND (al.status = 'delivered' OR al.status = 'read' OR al.status = 'sent')`, [req.user.org_id], (err, row) => {
         if (!err && row) stats.sent = row.count;
 
-        db.get(`SELECT COUNT(*) as count FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE a.user_id = ? AND al.status = 'failed'`, [req.user.id], (err2, row2) => {
+        db.get(`SELECT COUNT(*) as count FROM automation_logs al JOIN automations a ON al.automation_id = a.id WHERE a.org_id = ? AND al.status = 'failed'`, [req.user.org_id], (err2, row2) => {
             if (!err2 && row2) stats.failed = row2.count;
 
-            db.get(`SELECT COUNT(*) as count FROM automations WHERE user_id = ? AND status = 'Active'`, [req.user.id], (err3, row3) => {
+            db.get(`SELECT COUNT(*) as count FROM automations WHERE org_id = ? AND status = 'Active'`, [req.user.org_id], (err3, row3) => {
                 if (!err3 && row3) stats.activeAutomations = row3.count;
                             res.json(stats);
             });
@@ -656,15 +718,15 @@ app.get('/api/dashboard/graph-data', authenticateToken, (req, res) => {
     const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
     const query = `
-        SELECT strftime('%H:00', sent_time) as hour, COUNT(*) as count, sent_time
+        SELECT to_char(date_trunc('hour', sent_time), 'HH24:00') as hour, COUNT(*) as count, MIN(sent_time) as sent_time
         FROM automation_logs al
         JOIN automations a ON al.automation_id = a.id
-        WHERE a.user_id = ? AND al.status IN ('delivered', 'read', 'sent') AND al.sent_time >= ?
-        GROUP BY strftime('%Y-%m-%d %H:00:00', sent_time)
+        WHERE a.org_id = ? AND al.status IN ('delivered', 'read', 'sent') AND al.sent_time >= ?
+        GROUP BY date_trunc('hour', sent_time)
         ORDER BY sent_time ASC
     `;
 
-    db.all(query, [req.user.id, twentyFourHoursAgo], (err, rows) => {
+    db.all(query, [req.user.org_id, twentyFourHoursAgo], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         
         // Fill in missing hours with 0
@@ -696,8 +758,8 @@ app.get('/api/logs', authenticateToken, (req, res) => {
     const offset = (page - 1) * limit;
     const status = req.query.status;
 
-    let whereClause = `a.user_id = ?`;
-    let queryParams = [req.user.id];
+    let whereClause = `a.org_id = ?`;
+    let queryParams = [req.user.org_id];
 
     if (status && status !== 'all') {
         const statuses = status.split(',');
@@ -743,9 +805,9 @@ app.get('/api/automations', authenticateToken, (req, res) => {
     db.all(`
         SELECT a.*, (SELECT COUNT(*) FROM automation_logs WHERE automation_id = a.id AND status = 'pending') as count 
         FROM automations a
-        WHERE a.user_id = ? AND a.status != 'Deleted'
+        WHERE a.org_id = ? AND a.status != 'Deleted'
         ORDER BY a.id DESC
-    `, [req.user.id], (err, rows) => {
+    `, [req.user.org_id], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
@@ -760,7 +822,7 @@ app.post('/api/automations', authenticateToken, (req, res) => {
         ? contacts.map((c) => String(c).replace(/\D/g, '')).filter(Boolean)
         : String(contacts || '').split(',').map((c) => c.replace(/\D/g, '')).filter(Boolean);
 
-    const userId = req.user.id;
+    const orgId = req.user.org_id;
 
     // Default to server offset if not provided (for older clients)
     const offsetMins = clientOffset !== undefined ? clientOffset : new Date().getTimezoneOffset();
@@ -774,8 +836,8 @@ app.post('/api/automations', authenticateToken, (req, res) => {
         msgTemplateStr = JSON.stringify(msgTemplateStr);
     }
 
-    db.run(`INSERT INTO automations (user_id, name, start_time, end_time, message_template, status, active_days, timezone_offset, ask_confirmation) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?)`,
-        [userId, name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, ask_confirmation ? 1 : 0],
+    db.run(`INSERT INTO automations (org_id, name, start_time, end_time, message_template, status, active_days, timezone_offset, ask_confirmation) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?)`,
+        [orgId, name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, ask_confirmation ? 1 : 0],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
 
@@ -833,13 +895,13 @@ app.post('/api/automations', authenticateToken, (req, res) => {
                 currentTimeOffset += actualBaseInterval;
                 const scheduledTime = new Date(absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
 
-                db.get("SELECT id FROM contacts WHERE phone = ? AND user_id = ?", [contactPhone, userId], (errC, row) => {
+                db.get("SELECT id FROM contacts WHERE phone = ? AND org_id = ?", [contactPhone, orgId], (errC, row) => {
                     let cId;
                     if (row) {
                         cId = row.id;
                         insertLogAndReminder(cId, scheduledTime);
                     } else {
-                        db.run("INSERT INTO contacts (user_id, name, phone) VALUES (?, ?, ?)", [userId, 'Unknown', contactPhone], function (errInsert) {
+                        db.run("INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?)", [orgId, 'Unknown', contactPhone], function (errInsert) {
                             if (!errInsert) {
                                 cId = this.lastID;
                                 insertLogAndReminder(cId, scheduledTime);
@@ -865,7 +927,7 @@ app.post('/api/automations', authenticateToken, (req, res) => {
 
 app.get('/api/automations/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-    db.get(`SELECT * FROM automations WHERE id = ? AND user_id = ?`, [id, req.user.id], (err, row) => {
+    db.get(`SELECT * FROM automations WHERE id = ? AND org_id = ?`, [id, req.user.org_id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.status(404).json({ error: 'Automation not found' });
         
@@ -896,10 +958,10 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
         ? contacts.map((c) => String(c).replace(/\D/g, '')).filter(Boolean)
         : String(contacts || '').split(',').map((c) => c.replace(/\D/g, '')).filter(Boolean);
 
-    const userId = req.user.id;
+    const orgId = req.user.org_id;
 
     // First ensure ownership
-    db.get('SELECT id FROM automations WHERE id = ? AND user_id = ?', [id, userId], (errCheck, rowCheck) => {
+    db.get('SELECT id FROM automations WHERE id = ? AND org_id = ?', [id, orgId], (errCheck, rowCheck) => {
         if (errCheck || !rowCheck) return res.status(403).json({ error: 'Not authorized or automation not found' });
 
         const offsetMins = clientOffset !== undefined ? clientOffset : new Date().getTimezoneOffset();
@@ -911,8 +973,8 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
             msgTemplateStr = JSON.stringify(msgTemplateStr);
         }
 
-        db.run(`UPDATE automations SET name = ?, start_time = ?, end_time = ?, message_template = ?, active_days = ?, timezone_offset = ?, ask_confirmation = ? WHERE id = ? AND user_id = ?`,
-            [name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, ask_confirmation ? 1 : 0, id, userId],
+        db.run(`UPDATE automations SET name = ?, start_time = ?, end_time = ?, message_template = ?, active_days = ?, timezone_offset = ?, ask_confirmation = ? WHERE id = ? AND org_id = ?`,
+            [name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, ask_confirmation ? 1 : 0, id, orgId],
             function (err) {
                 if (err) return res.status(500).json({ error: err.message });
 
@@ -975,13 +1037,13 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
                         currentTimeOffset += actualBaseInterval;
                         const scheduledTime = new Date(absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
 
-                        db.get("SELECT id FROM contacts WHERE phone = ? AND user_id = ?", [contactPhone, userId], (errC, row) => {
+                        db.get("SELECT id FROM contacts WHERE phone = ? AND org_id = ?", [contactPhone, orgId], (errC, row) => {
                             let cId;
                             if (row) {
                                 cId = row.id;
                                 insertLogAndReminder(cId, scheduledTime);
                             } else {
-                                db.run("INSERT INTO contacts (user_id, name, phone) VALUES (?, ?, ?)", [userId, 'Unknown', contactPhone], function (errInsert) {
+                                db.run("INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?)", [orgId, 'Unknown', contactPhone], function (errInsert) {
                                     if (!errInsert) {
                                         cId = this.lastID;
                                         insertLogAndReminder(cId, scheduledTime);
@@ -1009,10 +1071,10 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/automations/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-    const userId = req.user.id;
+    const orgId = req.user.org_id;
     
     // Ensure ownership before delete
-    db.get('SELECT id FROM automations WHERE id = ? AND user_id = ?', [id, userId], (errCheck, rowCheck) => {
+    db.get('SELECT id FROM automations WHERE id = ? AND org_id = ?', [id, orgId], (errCheck, rowCheck) => {
         if (errCheck || !rowCheck) return res.status(403).json({ error: 'Not authorized or automation not found' });
         
         // Remove only pending logs so we don't process them anymore
@@ -1020,7 +1082,7 @@ app.delete('/api/automations/:id', authenticateToken, (req, res) => {
             if (errLog) return res.status(500).json({ error: errLog.message });
             
             // Soft delete the automation to keep Delivered logs intact
-            db.run('UPDATE automations SET status = "Deleted" WHERE id = ? AND user_id = ?', [id, userId], (errAuto) => {
+            db.run('UPDATE automations SET status = "Deleted" WHERE id = ? AND org_id = ?', [id, orgId], (errAuto) => {
                 if (errAuto) return res.status(500).json({ error: errAuto.message });
                 res.json({ message: 'Automation deleted successfully' });
             });
@@ -1030,9 +1092,9 @@ app.delete('/api/automations/:id', authenticateToken, (req, res) => {
 
 app.patch('/api/automations/:id/toggle', authenticateToken, (req, res) => {
     const { id } = req.params;
-    const userId = req.user.id;
+    const orgId = req.user.org_id;
     
-    db.get('SELECT status FROM automations WHERE id = ? AND user_id = ?', [id, userId], (errCheck, rowCheck) => {
+    db.get('SELECT status FROM automations WHERE id = ? AND org_id = ?', [id, orgId], (errCheck, rowCheck) => {
         if (errCheck || !rowCheck) return res.status(403).json({ error: 'Not authorized or automation not found' });
         
         const newStatus = rowCheck.status === 'Active' ? 'Paused' : 'Active';
@@ -1102,27 +1164,30 @@ io.use((socket, next) => {
 whatsappClient.setIo(io);
 
 io.on('connection', (socket) => {
-    const userId = socket.user.id;
-    console.log(`User ${userId} connected via socket`);
+    const orgId = socket.user.id;
+    console.log(`User ${orgId} connected via socket`);
     
     // Join a room specific to this user so we can emit targeted status updates
-    socket.join(`user_${userId}`);
+    socket.join(`user_${orgId}`);
     
     // Send current status on connection
-    socket.emit('wa_status', whatsappClient.getStatus(userId));
+    socket.emit('wa_status', whatsappClient.getStatus(orgId));
     
     socket.on('disconnect', () => {
-        console.log(`User ${userId} disconnected via socket`);
+        console.log(`User ${orgId} disconnected via socket`);
     });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`Server is running on port ${PORT}`);
     
     // Evolution owns session persistence, so boot just reconciles our cache
     // with what it already has. No staggering — that only existed to avoid
     // launching several Chromium processes at once.
-    db.all('SELECT id FROM users', [], async (err, rows) => {
+    // Instance names must be in memory before any send resolves one.
+    await require('./orgInstances').load().catch(e => console.error('[instances] load failed:', e.message));
+
+    db.all('SELECT id FROM organisations', [], async (err, rows) => {
         const userIds = (!err && rows) ? rows.map(r => r.id) : [];
         await whatsappClient.bootAll(userIds).catch(e => console.error('[WA] bootAll error:', e.message));
     });

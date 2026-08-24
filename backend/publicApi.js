@@ -22,9 +22,20 @@ function generateKey() {
     return 'wr_' + crypto.randomBytes(24).toString('hex');
 }
 
-async function issueKey(userId) {
+const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
+
+/**
+ * Keys are stored hashed. Previously a single plaintext users.api_key meant a
+ * database read handed over live send credentials for every tenant. The raw key
+ * is returned once, here, and never recoverable afterwards.
+ */
+async function issueKey(orgId, { name = 'Default', createdBy = null } = {}) {
     const key = generateKey();
-    await dbRun('UPDATE users SET api_key = ?, api_key_created_at = CURRENT_TIMESTAMP WHERE id = ?', [key, userId]);
+    await dbRun(
+        `INSERT INTO api_keys (org_id, name, key_hash, key_prefix, created_by)
+         VALUES (?, ?, ?, ?, ?)`,
+        [orgId, name, sha256(key), key.slice(0, 11), createdBy]
+    );
     return key;
 }
 
@@ -41,12 +52,19 @@ function authenticateApiKey(req, res, next) {
     if (!key) {
         return res.status(401).json({ error: 'Missing API key', hint: 'Send it as: Authorization: Bearer <key>' });
     }
-    db.get('SELECT id, username FROM users WHERE api_key = ?', [key], (err, user) => {
-        if (err) return res.status(500).json({ error: 'Internal error' });
-        if (!user) return res.status(401).json({ error: 'Invalid API key' });
-        req.apiUser = user;
-        next();
-    });
+    db.get(
+        `SELECT k.id AS key_id, k.org_id, o.name AS org_name
+           FROM api_keys k JOIN organisations o ON o.id = k.org_id
+          WHERE k.key_hash = ? AND k.revoked_at IS NULL`,
+        [sha256(key)],
+        (err, row) => {
+            if (err) return res.status(500).json({ error: 'Internal error' });
+            if (!row) return res.status(401).json({ error: 'Invalid API key' });
+            // Best-effort; a failed touch must never block a send.
+            db.run('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [row.key_id], () => {});
+            req.apiUser = { org_id: row.org_id, username: row.org_name, key_id: row.key_id };
+            next();
+        });
 }
 
 /**
@@ -58,7 +76,7 @@ const RATE_MAX = 60;
 const RATE_WINDOW_MS = 60 * 1000;
 const hits = new Map();
 function rateLimit(req, res, next) {
-    const id = req.apiUser.id;
+    const id = req.apiUser.org_id;
     const now = Date.now();
     const rec = hits.get(id) || { count: 0, reset: now + RATE_WINDOW_MS };
     if (now > rec.reset) { rec.count = 0; rec.reset = now + RATE_WINDOW_MS; }
@@ -82,7 +100,7 @@ function router() {
 
     // Is this key valid, and can it send right now?
     r.get('/status', authenticateApiKey, (req, res) => {
-        const s = whatsappClient.getStatus(req.apiUser.id);
+        const s = whatsappClient.getStatus(req.apiUser.org_id);
         res.json({
             account: req.apiUser.username,
             whatsapp_connected: s.isConnected,
@@ -106,14 +124,14 @@ function router() {
         // Opt-out is a hard stop, and it applies to API traffic too — otherwise
         // an integration silently undoes a customer's STOP.
         const contact = await dbGet(
-            'SELECT id, opted_out FROM contacts WHERE user_id = ? AND phone = ?',
-            [req.apiUser.id, number]
+            'SELECT id, opted_out FROM contacts WHERE org_id = ? AND phone = ?',
+            [req.apiUser.org_id, number]
         ).catch(() => null);
         if (contact && Number(contact.opted_out) === 1) {
             return res.status(403).json({ error: 'This contact has opted out of messages', to: number });
         }
 
-        const status = whatsappClient.getStatus(req.apiUser.id);
+        const status = whatsappClient.getStatus(req.apiUser.org_id);
         if (!status.isConnected) {
             return res.status(409).json({
                 error: 'WhatsApp is not connected for this account',
@@ -123,20 +141,20 @@ function router() {
 
         let result;
         if (media_url) {
-            result = await whatsappClient.sendMediaByUrl(req.apiUser.id, number, {
+            result = await whatsappClient.sendMediaByUrl(req.apiUser.org_id, number, {
                 url: media_url, caption: caption || text || '', filename,
             });
         } else {
-            result = await whatsappClient.sendMessage(req.apiUser.id, number, text);
+            result = await whatsappClient.sendMessage(req.apiUser.org_id, number, text);
         }
 
         const messageId = typeof result === 'string' ? result : null;
         const ok = !!result;
 
         dbRun(
-            `INSERT INTO api_sends (user_id, to_number, body, has_media, wa_message_id, status, error_reason, reference)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [req.apiUser.id, number, text || caption || '', media_url ? 1 : 0, messageId,
+            `INSERT INTO api_sends (org_id, api_key_id, to_number, body, has_media, wa_message_id, status, error_reason, reference)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [req.apiUser.org_id, req.apiUser.key_id, number, text || caption || '', !!media_url, messageId,
              ok ? 'sent' : 'failed', ok ? null : 'Send failed', reference || null]
         ).catch(() => {});
 
@@ -149,8 +167,8 @@ function router() {
         const limit = Math.min(parseInt(req.query.limit) || 25, 100);
         db.all(
             `SELECT to_number, body, has_media, wa_message_id, status, reference, created_at
-               FROM api_sends WHERE user_id = ? ORDER BY id DESC LIMIT ?`,
-            [req.apiUser.id, limit],
+               FROM api_sends WHERE org_id = ? ORDER BY id DESC LIMIT ?`,
+            [req.apiUser.org_id, limit],
             (err, rows) => {
                 if (err) return res.status(500).json({ error: 'Internal error' });
                 res.json({ messages: rows || [] });
