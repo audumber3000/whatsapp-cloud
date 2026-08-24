@@ -9,6 +9,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
 import InboxView from './components/InboxView';
 import ResponseSummary from './components/ResponseSummary';
+import ActivityFeed from './components/ActivityFeed';
 
 import { io } from 'socket.io-client';
 import {
@@ -237,47 +238,52 @@ function MainApp() {
         </div>
 
         <div className="nav-menu">
+          <div className="nav-section">Overview</div>
           <div
             className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('dashboard')}
           >
-            <LayoutDashboard size={20} />
+            <LayoutDashboard size={19} />
             Dashboard
           </div>
+          <div
+            className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`}
+            onClick={() => { setSidebarOpen(false); setUnread(0); setActiveTab('inbox'); }}
+          >
+            <Inbox size={19} />
+            Inbox
+            {unread > 0 && <span className="inbox-unread" style={{ marginLeft: 'auto' }}>{unread}</span>}
+          </div>
+
+          <div className="nav-section">Messaging</div>
           <div
             className={`nav-item ${activeTab === 'automations' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('automations')}
           >
-            <Zap size={20} />
+            <Zap size={19} />
             Automations
           </div>
           <div
             className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('contacts')}
           >
-            <Users size={20} />
+            <Users size={19} />
             Contacts
-          </div>
-          <div
-            className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`}
-            onClick={() => { setSidebarOpen(false); setUnread(0); setActiveTab('inbox'); }}
-          >
-            <Inbox size={20} />
-            Inbox
-            {unread > 0 && <span className="inbox-unread" style={{ marginLeft: 'auto' }}>{unread}</span>}
           </div>
           <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
           >
-            <Activity size={20} />
+            <Activity size={19} />
             Activity Logs
           </div>
-          <div 
+
+          <div className="nav-section">Settings &amp; Help</div>
+          <div
              className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
              onClick={() => setSidebarOpen(false) || setActiveTab('settings')}
           >
-            <Settings size={20} />
+            <Settings size={19} />
             Settings
           </div>
         </div>
@@ -343,7 +349,7 @@ function MainApp() {
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                  <WhatsAppGlyph size={62} rounded />
+                  <WhatsAppGlyph size={64} />
                 </div>
                 <h2>Connect WhatsApp</h2>
                 <p>Scan the QR code below using your WhatsApp mobile app to link WA Reach.</p>
@@ -616,6 +622,10 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
             </AreaChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 18, marginBottom: 18 }} className="dashboard-grid">
+        <ActivityFeed apiUrl={API_URL} token={token} socket={socket} limit={10} />
       </div>
 
       <div className="dashboard-grid">

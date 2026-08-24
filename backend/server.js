@@ -482,6 +482,33 @@ app.get('/api/dashboard/responses', authenticateToken, (req, res) => {
     });
 });
 
+// A single chronological stream of what happened: replies coming in and
+// messages going out, merged. Cheaper to scan than two separate tables.
+app.get('/api/feed', authenticateToken, (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+    db.all(`
+        SELECT 'inbound' AS kind, im.received_at AS at,
+               COALESCE(c.name, 'Unknown') AS who, im.from_number AS phone,
+               im.body AS text, im.intent AS detail, NULL AS status
+          FROM inbound_messages im
+          LEFT JOIN contacts c ON c.id = im.contact_id
+         WHERE im.user_id = ?
+        UNION ALL
+        SELECT 'outbound' AS kind, al.sent_time AS at,
+               COALESCE(c.name, 'Unknown') AS who, c.phone AS phone,
+               al.content AS text, al.response AS detail, al.status AS status
+          FROM automation_logs al
+          JOIN automations a ON a.id = al.automation_id
+          LEFT JOIN contacts c ON c.id = al.contact_id
+         WHERE a.user_id = ? AND al.status != 'pending'
+        ORDER BY at DESC
+        LIMIT ?
+    `, [req.user.id, req.user.id, limit], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
 // --- Health ---
 app.get('/api/health/alerts', authenticateToken, (req, res) => {
     db.all('SELECT kind, detail, created_at FROM health_alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',

@@ -604,6 +604,51 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
   border-top:1px solid var(--border);font-size:13px;color:var(--text-muted)}
 .response-none svg{flex:none;margin-top:1px;color:var(--text-faint)}
 
+/* ==== grouped nav ========================================================= */
+.nav-section{font-size:10.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;
+  color:rgba(233,243,238,.42);padding:16px 12px 6px}
+.nav-section:first-child{padding-top:2px}
+
+/* ==== activity feed ======================================================= */
+.feed-item{display:flex;gap:11px;padding:12px 14px;border-left:3px solid var(--border-strong);
+  background:var(--surface);border:1px solid var(--border);border-left-width:3px;
+  border-radius:var(--r-md);margin-bottom:9px;box-shadow:var(--sh-1)}
+.feed-item.reply{border-left-color:var(--brand)}
+.feed-item.confirm{border-left-color:var(--success)}
+.feed-item.optout{border-left-color:var(--danger)}
+.feed-item.failed{border-left-color:var(--danger)}
+.feed-item.sent{border-left-color:var(--border-strong)}
+.feed-ico{flex:none;margin-top:2px}
+.feed-body{flex:1;min-width:0}
+.feed-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.feed-who{font-size:13.5px;font-weight:600}
+.feed-when{font-size:11px;color:var(--text-faint);white-space:nowrap;font-variant-numeric:tabular-nums}
+.feed-text{font-size:13px;color:var(--text-muted);margin-top:2px;overflow:hidden;
+  text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+/* ==== flow / template cards ============================================== */
+.flow-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.flow-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  padding:18px;display:flex;flex-direction:column;gap:9px;box-shadow:var(--sh-1);
+  transition:border-color .15s,box-shadow .15s,transform .12s}
+.flow-card:hover{border-color:var(--border-strong);box-shadow:var(--sh-2);transform:translateY(-1px)}
+.flow-ico{width:36px;height:36px;border-radius:var(--r-md);display:flex;align-items:center;
+  justify-content:center;background:var(--brand-ghost);color:var(--brand-teal)}
+:root[data-theme="dark"] .flow-ico{color:var(--brand)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .flow-ico{color:var(--brand)}}
+.flow-card h4{font-size:15px;font-weight:700;margin:0}
+.flow-card p{font-size:13px;color:var(--text-muted);margin:0;flex:1;line-height:1.5}
+.flow-card .btn-outline{align-self:flex-start;margin-top:4px}
+
+/* ==== richer empty states ================================================ */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:44px 28px;gap:5px}
+.empty-art{width:78px;height:78px;border-radius:var(--r-full);background:var(--surface-sunken);
+  display:flex;align-items:center;justify-content:center;color:var(--text-faint);margin-bottom:8px}
+.empty-state h4{font-size:16px;font-weight:700;margin:0}
+.empty-state p{font-size:13.5px;color:var(--text-muted);margin:0;max-width:38ch}
+.empty-state .btn-primary{margin-top:12px}
+
 /* ==== responsive ========================================================== */
 /* The app was desktop-only: no media queries at all, a fixed 250px sidebar and
    hard 3-column grids. */
