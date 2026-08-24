@@ -3,11 +3,12 @@ import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Sun, Menu, Inbox, Search, LogOut, Link2Off,
   CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
-  Upload, Paperclip, Users, Pencil
+  Upload, Paperclip, Users, Pencil, Ban, ShieldCheck
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
 import InboxView from './components/InboxView';
+import ResponseSummary from './components/ResponseSummary';
 
 import { io } from 'socket.io-client';
 import {
@@ -364,7 +365,7 @@ function MainApp() {
             </div>
           ) : (
             <>
-              {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} />}
+              {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} socket={socketRef} />}
               {activeTab === 'automations' && <AutomationsView token={token} />}
               {activeTab === 'contacts' && <ContactsView token={token} />}
               {activeTab === 'inbox' && (
@@ -473,7 +474,7 @@ function AuthView({ setToken }) {
 
 // --- SUBVIEWS ---
 
-function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
+function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
   const [stats, setStats] = useState({ sent: 0, failed: 0, activeAutomations: 0 });
   const [graphData, setGraphData] = useState([]);
   const [recentAutomations, setRecentAutomations] = useState([]);
@@ -530,6 +531,8 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
             </span>
          </div>
       </div>
+
+      <ResponseSummary apiUrl={API_URL} token={token} socket={socket} />
 
       <div className="stats-row">
         <div className="stat-box">
@@ -1554,6 +1557,46 @@ function ContactsView({ token }) {
 
   const authHeaders = { 'Authorization': `Bearer ${token}` };
 
+  const [checking, setChecking] = useState(false);
+
+  // Ask WhatsApp which of these numbers actually exist, rather than finding out
+  // by burning sends on them — repeated failures are themselves a ban signal.
+  const checkNumbers = async () => {
+    setChecking(true);
+    try {
+      const r = await fetch(`${API_URL}/contacts/validate`, { method: 'POST', headers: authHeaders });
+      const d = await r.json();
+      if (!r.ok) {
+        setBanner({ text: d.error || 'Could not check numbers', type: 'error' });
+      } else {
+        setBanner({
+          text: d.invalid > 0
+            ? `Checked ${d.checked} numbers — ${d.invalid} not on WhatsApp.`
+            : `Checked ${d.checked} numbers — all valid.`,
+          type: d.invalid > 0 ? 'error' : 'success',
+        });
+        fetchContacts();
+      }
+    } finally {
+      setChecking(false);
+      setTimeout(() => setBanner({ text: '', type: '' }), 5000);
+    }
+  };
+
+  const toggleOptOut = async (c) => {
+    const next = Number(c.opted_out) === 1 ? false : true;
+    const r = await fetch(`${API_URL}/contacts/${c.id}/optout`, {
+      method: 'PATCH',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ opted_out: next }),
+    });
+    if (r.ok) {
+      setBanner({ text: next ? 'Contact opted out — queued messages cancelled.' : 'Contact opted back in.', type: 'success' });
+      fetchContacts();
+      setTimeout(() => setBanner({ text: '', type: '' }), 4000);
+    }
+  };
+
   const fetchContacts = (q = '') => {
     setLoading(true);
     fetch(`${API_URL}/contacts${q ? `?search=${encodeURIComponent(q)}` : ''}`, { headers: authHeaders })
@@ -1637,6 +1680,15 @@ function ContactsView({ token }) {
               <Search size={16} />
               <input type="text" placeholder="Search name or number…" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
+            <button
+              className="btn-outline"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={checkNumbers}
+              disabled={checking}
+              title="Check which numbers are registered on WhatsApp"
+            >
+              <ShieldCheck size={16} /> {checking ? 'Checking…' : 'Check numbers'}
+            </button>
             <button className="btn-outline" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setShowImport(true)}>
               <Upload size={16} /> Import
             </button>
@@ -1667,11 +1719,37 @@ function ContactsView({ token }) {
               ) : contacts.map(c => (
                 <tr key={c.id}>
                   <td style={{ fontWeight: 500 }}>{c.name || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
-                  <td>+{c.phone}</td>
+                  <td>
+                    +{c.phone}
+                    <span style={{ display: 'inline-flex', gap: 6, marginLeft: 8, verticalAlign: 'middle' }}>
+                      {Number(c.opted_out) === 1 && (
+                        <span className="badge badge-failed" title="This contact asked to stop receiving messages">
+                          <Ban size={11} /> Opted out
+                        </span>
+                      )}
+                      {c.wa_valid === 0 && (
+                        <span className="badge badge-pending" title="Not registered on WhatsApp — sends to this number will fail">
+                          <AlertTriangle size={11} /> Not on WhatsApp
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   <td style={{ textAlign: 'right' }}>
                     <button title="Edit" onClick={() => setModal({ mode: 'edit', id: c.id, name: c.name || '', phone: c.phone })}
                       style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6, color: 'var(--text-muted)' }}>
                       <Pencil size={15} />
+                    </button>
+                    <button
+                      title={Number(c.opted_out) === 1 ? 'Allow messages again' : 'Stop messaging this contact'}
+                      onClick={() => toggleOptOut(c)}
+                      style={{
+                        background: Number(c.opted_out) === 1 ? 'var(--success-bg)' : 'var(--surface-raised)',
+                        border: `1px solid ${Number(c.opted_out) === 1 ? 'var(--success-border)' : 'var(--border)'}`,
+                        borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6,
+                        color: Number(c.opted_out) === 1 ? 'var(--success)' : 'var(--text-muted)',
+                      }}
+                    >
+                      <Ban size={15} />
                     </button>
                     <button title="Delete" onClick={() => deleteContact(c)}
                       style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: 6, cursor: 'pointer', color: 'var(--danger)' }}>

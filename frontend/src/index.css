@@ -582,6 +582,28 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
 .toggle-row strong{font-size:14px;font-weight:600;color:var(--text)}
 .toggle-row em{font-style:normal;font-size:12.5px;color:var(--text-muted);line-height:1.45}
 
+/* ==== response summary ==================================================== */
+.response-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+.response-tile{display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+  background:var(--surface-sunken);border:1px solid var(--border);
+  border-radius:var(--r-md);padding:13px 15px}
+.rt-n{font-size:24px;font-weight:800;line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.rt-l{font-size:12px;color:var(--text-muted);font-weight:500}
+
+.response-bar{display:flex;height:7px;border-radius:var(--r-full);overflow:hidden;
+  background:var(--surface-sunken);margin-top:14px}
+.response-bar div{height:100%}
+
+.response-list{margin-top:16px;border-top:1px solid var(--border);padding-top:6px}
+.response-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 0;border-bottom:1px solid var(--border)}
+.response-row:last-child{border-bottom:0}
+.rr-name{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.response-none{display:flex;gap:9px;align-items:flex-start;margin-top:16px;padding-top:14px;
+  border-top:1px solid var(--border);font-size:13px;color:var(--text-muted)}
+.response-none svg{flex:none;margin-top:1px;color:var(--text-faint)}
+
 /* ==== responsive ========================================================== */
 /* The app was desktop-only: no media queries at all, a fixed 250px sidebar and
    hard 3-column grids. */

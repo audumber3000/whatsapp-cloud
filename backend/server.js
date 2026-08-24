@@ -440,6 +440,48 @@ app.patch('/api/contacts/:id/optout', authenticateToken, (req, res) => {
     );
 });
 
+// Today's confirmation picture — the thing a front desk actually wants at
+// 9am: who is coming, who moved, who dropped out, and who never answered.
+app.get('/api/dashboard/responses', authenticateToken, (req, res) => {
+    const since = req.query.since || 'start of day';
+    db.all(`
+        SELECT
+          SUM(CASE WHEN al.response = 'confirm'    THEN 1 ELSE 0 END) AS confirmed,
+          SUM(CASE WHEN al.response = 'reschedule' THEN 1 ELSE 0 END) AS reschedule,
+          SUM(CASE WHEN al.response = 'cancel'     THEN 1 ELSE 0 END) AS cancelled,
+          SUM(CASE WHEN al.response IS NULL        THEN 1 ELSE 0 END) AS no_reply,
+          COUNT(*) AS total
+        FROM automation_logs al
+        JOIN automations a ON a.id = al.automation_id
+        WHERE a.user_id = ?
+          AND al.status IN ('delivered','sent','read')
+          AND al.sent_time >= datetime('now', ?)
+    `, [req.user.id, since === 'start of day' ? 'start of day' : since], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const r = (rows && rows[0]) || {};
+        const summary = {
+            confirmed: r.confirmed || 0,
+            reschedule: r.reschedule || 0,
+            cancelled: r.cancelled || 0,
+            no_reply: r.no_reply || 0,
+            total: r.total || 0,
+        };
+
+        // Names too, so the list is actionable rather than just a number.
+        db.all(`
+            SELECT c.name, c.phone, al.response, al.responded_at
+            FROM automation_logs al
+            JOIN automations a ON a.id = al.automation_id
+            LEFT JOIN contacts c ON c.id = al.contact_id
+            WHERE a.user_id = ? AND al.response IS NOT NULL
+              AND al.sent_time >= datetime('now', 'start of day')
+            ORDER BY al.responded_at DESC LIMIT 50
+        `, [req.user.id], (e2, detail) => {
+            res.json({ ...summary, responses: detail || [] });
+        });
+    });
+});
+
 // --- Health ---
 app.get('/api/health/alerts', authenticateToken, (req, res) => {
     db.all('SELECT kind, detail, created_at FROM health_alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
