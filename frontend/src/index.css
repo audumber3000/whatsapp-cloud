@@ -9,28 +9,28 @@
    ========================================================================= */
 :root {
     /* Brand */
-    --brand:          #25D366;   /* WhatsApp green */
-    --brand-hover:    #1EBE5A;
-    --brand-press:    #17A94E;
-    --brand-teal:     #128C7E;
-    --brand-deep:     #075E54;   /* sidebar / headers */
+    --brand:          #00A884;   /* WhatsApp Web UI green (the logo green #25D366 is only used by the mark itself) */
+    --brand-hover:    #06937A;
+    --brand-press:    #027E68;
+    --brand-teal:     #008069;
+    --brand-deep:     #111B21;   /* WA Web side panel */   /* sidebar / headers */
     --brand-bubble:   #DCF8C6;   /* outgoing bubble tint */
-    --brand-ghost:    rgba(37, 211, 102, 0.10);
+    --brand-ghost:    rgba(0, 168, 132, 0.10);
 
     /* Surfaces — greens biased, not slate */
-    --bg:             #F4F7F5;
+    --bg:             #F0F2F5;
     --surface:        #FFFFFF;
-    --surface-raised: #EDF2EE;
-    --surface-sunken: #E7EDE8;
+    --surface-raised: #F0F2F5;
+    --surface-sunken: #F7F8FA;
 
     /* Text */
-    --text:           #0F1A17;
-    --text-muted:     #5E6B66;
-    --text-faint:     #8A9691;
+    --text:           #111B21;
+    --text-muted:     #667781;
+    --text-faint:     #8696A0;
     --text-on-brand:  #FFFFFF;
 
-    --border:         #DDE5DF;
-    --border-strong:  #C7D2CB;
+    --border:         #E9EDEF;
+    --border-strong:  #D1D7DB;
 
     /* Semantic — success is intentionally distinct from the brand green so a
        "delivered" pill can't be mistaken for a brand accent. */
@@ -43,13 +43,25 @@
     --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
     /* Radii */
-    --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-xl: 20px;  --r-full: 999px;
+    --r-sm: 3px;  --r-md: 6px;   --r-lg: 8px;   --r-xl: 10px;  --r-full: 999px;
 
     /* Elevation */
-    --sh-1: 0 1px 2px rgba(15, 26, 23, .05);
-    --sh-2: 0 1px 3px rgba(15, 26, 23, .06), 0 4px 12px -6px rgba(15, 26, 23, .10);
-    --sh-3: 0 4px 12px -2px rgba(15, 26, 23, .08), 0 12px 32px -12px rgba(15, 26, 23, .16);
-    --sh-4: 0 12px 40px -8px rgba(15, 26, 23, .22);
+    --sh-1: none;
+    --sh-2: 0 1px 2px rgba(11, 20, 26, .06);
+    --sh-3: 0 2px 5px rgba(11, 20, 26, .10);
+    --sh-4: 0 8px 24px rgba(11, 20, 26, .18);
+
+    /* Chart categorical ramp — fixed order, never cycled. Validated with the
+       dataviz validator against #FFFFFF: lightness band, chroma floor, CVD
+       separation and normal-vision floor all pass. Contrast sits under 3:1,
+       which is why every chart here ships a legend and direct labels. */
+    --c1: #00A884;   /* series 1 — also the brand */
+    --c2: #D9922F;   /* series 2 */
+    --c3: #4AAFDD;   /* series 3 */
+    --c4: #DE6D6D;   /* series 4 */
+    --c-grid: #E9EDEF;
+    --c-axis: #8696A0;
+    --c-empty: #E9EDEF;   /* the unfilled remainder in donuts and gauges */
 
     --sidebar-w: 250px;
     --header-h: 64px;
@@ -60,13 +72,13 @@
 /* Dark — grounded in WhatsApp's own dark chat surfaces. */
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-        --brand:          #25D366;
-        --brand-hover:    #2EE070;
-        --brand-press:    #45E883;
-        --brand-teal:     #1DA598;
-        --brand-deep:     #0B1F1C;
+        --brand:          #00A884;
+        --brand-hover:    #06CF9C;
+        --brand-press:    #1FE0AE;
+        --brand-teal:     #06CF9C;
+        --brand-deep:     #111B21;
         --brand-bubble:   #005C4B;
-        --brand-ghost:    rgba(37, 211, 102, 0.14);
+        --brand-ghost:    rgba(0, 168, 132, 0.16);
 
         --bg:             #0B141A;
         --surface:        #111B21;
@@ -86,7 +98,15 @@
         --warning:        #D9AB5A;  --warning-bg: #2F2513;  --warning-border: #55411D;
         --info:           #6BB4E8;  --info-bg:    #10283A;  --info-border:    #1E4763;
 
-        --sh-1: 0 1px 2px rgba(0,0,0,.35);
+        --c1: #00A884;
+        --c2: #BE7F22;
+        --c3: #2E99CA;
+        --c4: #DE6D6D;
+        --c-grid: #2A3942;
+        --c-axis: #8696A0;
+        --c-empty: #202C33;
+
+        --sh-1: none;
         --sh-2: 0 1px 3px rgba(0,0,0,.4), 0 4px 12px -6px rgba(0,0,0,.5);
         --sh-3: 0 4px 12px -2px rgba(0,0,0,.45), 0 12px 32px -12px rgba(0,0,0,.6);
         --sh-4: 0 12px 40px -8px rgba(0,0,0,.7);
@@ -95,13 +115,13 @@
     }
 }
 :root[data-theme="dark"] {
-    --brand:          #25D366;
-    --brand-hover:    #2EE070;
-    --brand-press:    #45E883;
-    --brand-teal:     #1DA598;
-    --brand-deep:     #0B1F1C;
+    --brand:          #00A884;
+    --brand-hover:    #06CF9C;
+    --brand-press:    #1FE0AE;
+    --brand-teal:     #06CF9C;
+    --brand-deep:     #111B21;
     --brand-bubble:   #005C4B;
-    --brand-ghost:    rgba(37, 211, 102, 0.14);
+    --brand-ghost:    rgba(0, 168, 132, 0.16);
 
     --bg:             #0B141A;
     --surface:        #111B21;
@@ -121,7 +141,15 @@
     --warning:        #D9AB5A;  --warning-bg: #2F2513;  --warning-border: #55411D;
     --info:           #6BB4E8;  --info-bg:    #10283A;  --info-border:    #1E4763;
 
-    --sh-1: 0 1px 2px rgba(0,0,0,.35);
+    --c1: #00A884;
+    --c2: #BE7F22;
+    --c3: #2E99CA;
+    --c4: #DE6D6D;
+    --c-grid: #2A3942;
+    --c-axis: #8696A0;
+    --c-empty: #202C33;
+
+    --sh-1: none;
     --sh-2: 0 1px 3px rgba(0,0,0,.4), 0 4px 12px -6px rgba(0,0,0,.5);
     --sh-3: 0 4px 12px -2px rgba(0,0,0,.45), 0 12px 32px -12px rgba(0,0,0,.6);
     --sh-4: 0 12px 40px -8px rgba(0,0,0,.7);
@@ -663,6 +691,69 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
 .code-copy{position:absolute;top:9px;right:9px;background:rgba(255,255,255,.12);border:0;
   color:#DCF8C6;border-radius:5px;padding:5px 7px;cursor:pointer;display:flex;align-items:center}
 .code-copy:hover{background:rgba(255,255,255,.22)}
+
+/* ==== design system page ================================================== */
+.ds-root{max-width:1240px;margin:0 auto;padding:28px}
+.ds-header{margin-bottom:24px}
+.ds-header h1{font-size:24px;font-weight:800;letter-spacing:-.03em}
+.ds-header p{font-size:14px;color:var(--text-muted);margin:6px 0 0;max-width:62ch}
+.ds-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px}
+
+.ds-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
+.ds-panel-head{padding:14px 16px;border-bottom:1px solid var(--border);background:var(--surface-sunken)}
+.ds-panel-head h3{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted)}
+.ds-panel-head p{font-size:12.5px;color:var(--text-faint);margin:3px 0 0}
+.ds-panel-body{padding:16px}
+.ds-note{font-size:12.5px;color:var(--text-faint);margin:12px 0 0;line-height:1.5}
+.ds-row{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:9px}
+.ds-row:last-child{margin-bottom:0}
+
+.ds-swatches{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px}
+.ds-sw{display:flex;flex-direction:column;gap:3px}
+.ds-sw span{height:34px;border-radius:var(--r-sm);border:1px solid var(--border)}
+.ds-sw b{font-size:12px;font-weight:600}
+.ds-sw code{font-size:10.5px;color:var(--text-faint);background:none;padding:0}
+
+.ds-surfaces{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ds-surfaces div{height:58px;border:1px solid var(--border);border-radius:var(--r-sm);
+  display:flex;align-items:flex-end;padding:6px}
+.ds-surfaces b{font-size:10px;color:var(--text-muted);font-weight:600}
+.ds-radii{display:flex;gap:14px;margin-top:14px;flex-wrap:wrap}
+.ds-radii div{display:flex;flex-direction:column;align-items:center;gap:3px}
+.ds-radii span{width:42px;height:30px;background:var(--brand-ghost);border:1px solid var(--brand);display:block}
+.ds-radii code{font-size:10.5px;background:none;padding:0;color:var(--text-muted)}
+.ds-radii em{font-style:normal;font-size:10px;color:var(--text-faint)}
+
+.ds-type p{margin:0 0 8px}
+.ds-tabs{display:flex;gap:20px;border-bottom:1px solid var(--border)}
+.ds-tabs button{background:none;border:0;padding:8px 2px 10px;font-family:inherit;font-size:13.5px;
+  font-weight:500;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent}
+.ds-tabs button.active{color:var(--brand);font-weight:600;border-bottom-color:var(--brand)}
+
+.ds-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.stat-delta{font-size:11.5px;font-weight:600;display:inline-flex;align-items:center;gap:3px;margin-top:2px}
+.stat-delta.up{color:var(--success)} .stat-delta.down{color:var(--danger)}
+.sparkline{margin-top:6px;margin-left:-2px}
+
+.ds-donut{position:relative}
+.ds-donut-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  text-align:center;pointer-events:none}
+.ds-donut-center b{display:block;font-size:22px;font-weight:800;letter-spacing:-.02em}
+.ds-donut-center span{font-size:10.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+
+/* chart chrome — recessive by design */
+.chart-tip{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);
+  padding:8px 10px;box-shadow:var(--sh-3);font-size:12.5px;min-width:110px}
+.chart-tip-label{font-weight:700;margin-bottom:5px;font-size:11.5px;color:var(--text)}
+.chart-tip-row{display:flex;align-items:center;gap:7px;padding:1px 0;color:var(--text-muted)}
+.chart-tip-row i{width:9px;height:9px;border-radius:2px;flex:none}
+.chart-tip-row b{margin-left:auto;color:var(--text);font-variant-numeric:tabular-nums}
+.chart-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;padding-top:10px;
+  border-top:1px solid var(--border);font-size:12.5px;color:var(--text-muted)}
+.chart-legend span{display:inline-flex;align-items:center;gap:6px}
+.chart-legend i{width:9px;height:9px;border-radius:2px;flex:none}
+
+@media(max-width:640px){.ds-root{padding:16px}.ds-surfaces{grid-template-columns:repeat(2,1fr)}}
 
 /* ==== responsive ========================================================== */
 /* The app was desktop-only: no media queries at all, a fixed 250px sidebar and

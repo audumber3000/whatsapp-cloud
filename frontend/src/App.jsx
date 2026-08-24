@@ -292,7 +292,7 @@ function MainApp() {
         <div className="sidebar-footer">
           <div className="sidebar-footer-title">Status: {isLinked ? 'Connected' : 'Disconnected'}</div>
           {isLinked && (
-            <button onClick={handleWADisconnect} style={{ marginTop: '8px', width: '100%', padding: '6px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px' }}>
+            <button onClick={handleWADisconnect} style={{ marginTop: '8px', width: '100%', padding: '6px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px' }}>
               <Link2Off size={14} /> Disconnect
             </button>
           )}
@@ -313,7 +313,7 @@ function MainApp() {
             {activeTab === 'dashboard' && (
               <>
                 Dashboard Overview
-                <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--text-muted)', background: 'var(--bg)', padding: '4px 10px', borderRadius: '20px', marginLeft: '12px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--text-muted)', background: 'var(--bg)', padding: '4px 10px', borderRadius: 'var(--r-full)', marginLeft: '12px' }}>
                   {getTimezoneInfo().gmt} {getTimezoneInfo().flag} {getTimezoneInfo().country}
                 </span>
               </>
@@ -508,7 +508,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
-        <div style={{ background: 'var(--surface)', padding: '10px', border: '1px solid var(--border)', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+        <div style={{ background: 'var(--surface)', padding: '10px', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
           <p style={{ fontWeight: 600, color: 'var(--text)', marginBottom: '4px' }}>{label}</p>
           <p style={{ color: 'var(--brand)' }}>Sent: {payload[0].value} messages</p>
         </div>
@@ -521,7 +521,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
     <div className="view-container">
       
       {/* Session Status Banner */}
-      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', padding: '16px 24px', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '8px', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', padding: '16px 24px', borderRadius: 'var(--r-lg)', border: '1px solid var(--border)', marginBottom: '8px', justifyContent: 'space-between' }}>
          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
              <MessageCircle size={28} color={isLinked ? 'var(--brand)' : 'var(--text-faint)'} />
              <div>
@@ -948,7 +948,7 @@ function AutomationsView({ token }) {
                 <select 
                   value={formData.timezone_offset} 
                   onChange={e => setFormData({ ...formData, timezone_offset: parseInt(e.target.value) })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', outline: 'none', background: 'var(--surface)' }}
+                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', outline: 'none', background: 'var(--surface)' }}
                 >
                   {TIMEZONES.map(tz => (
                     <option key={tz.offset} value={tz.offset}>{tz.label}</option>
@@ -1011,7 +1011,7 @@ function AutomationsView({ token }) {
                   placeholder="e.g. 15551234567, 44207946, 91987654321"
                   value={formData.contacts}
                   onChange={e => setFormData({ ...formData, contacts: e.target.value })}
-                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)', resize: 'vertical' }}
+                  style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', resize: 'vertical' }}
                 />
               </div>
 
@@ -1028,7 +1028,7 @@ function AutomationsView({ token }) {
                  </div>
 
                  {formData.message_template.map((block, blockIndex) => (
-                    <div key={blockIndex} style={{ border: '1px solid var(--border)', background: 'var(--surface-sunken)', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+                    <div key={blockIndex} style={{ border: '1px solid var(--border)', background: 'var(--surface-sunken)', padding: '16px', borderRadius: 'var(--r-md)', marginBottom: '12px' }}>
                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
                           <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--text)' }}>Message Block {blockIndex + 1}</h4>
                           {formData.message_template.length > 1 && (
@@ -1045,10 +1045,10 @@ function AutomationsView({ token }) {
                                 placeholder={block.media_id ? `Caption variation ${varIndex + 1} (optional)...` : `Variation ${varIndex + 1} for block ${blockIndex + 1}...`}
                                 value={varText}
                                 onChange={(e) => handleVariationChange(blockIndex, varIndex, e.target.value)}
-                                style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid var(--border-strong)', resize: 'vertical', fontSize: '13px' }}
+                                style={{ flex: 1, padding: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-strong)', resize: 'vertical', fontSize: '13px' }}
                               />
                               {block.variations.length > 1 && (
-                                <button type="button" onClick={() => handleRemoveVariation(blockIndex, varIndex)} style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-strong)', padding: '6px', borderRadius: '6px', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                <button type="button" onClick={() => handleRemoveVariation(blockIndex, varIndex)} style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-strong)', padding: '6px', borderRadius: 'var(--r-md)', color: 'var(--text-muted)', cursor: 'pointer' }}>
                                    <XCircle size={16} />
                                 </button>
                               )}
@@ -1061,7 +1061,7 @@ function AutomationsView({ token }) {
                        {/* Attachment (image / PDF / video) — text variations become the caption */}
                        <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed var(--border)' }}>
                           {block.media_id ? (
-                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: '6px', padding: '8px 12px' }}>
+                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: 'var(--r-md)', padding: '8px 12px' }}>
                                 <Paperclip size={15} color="var(--info)" />
                                 <span style={{ flex: 1, fontSize: '13px', color: 'var(--info)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                    {block.media_name || 'Attachment'}
@@ -1152,7 +1152,7 @@ function LogsView({ token }) {
                <select 
                  value={statusFilter} 
                  onChange={(e) => handleFilterChange(e.target.value)}
-                 style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border)', outline: 'none', fontSize: '14px', background: 'var(--surface)' }}
+                 style={{ padding: '8px 12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border)', outline: 'none', fontSize: '14px', background: 'var(--surface)' }}
                >
                  <option value="all">All Status</option>
                  <option value="delivered">Delivered</option>
@@ -1226,7 +1226,7 @@ function LogsView({ token }) {
                       <tr className="expanded-row">
                         <td></td>
                         <td colSpan={5} style={{ padding: '0 16px 16px' }}>
-                          <div style={{ background: 'var(--surface-raised)', padding: '12px', borderRadius: '8px', fontSize: '13px', color: 'var(--text)', borderLeft: '4px solid var(--brand)', whiteSpace: 'pre-wrap' }}>
+                          <div style={{ background: 'var(--surface-raised)', padding: '12px', borderRadius: 'var(--r-md)', fontSize: '13px', color: 'var(--text)', borderLeft: '4px solid var(--brand)', whiteSpace: 'pre-wrap' }}>
                              {log.content}
                           </div>
                         </td>
@@ -1368,12 +1368,12 @@ function SettingsView({ token }) {
            ) : activeTab === 'account' ? (
              <form style={{ padding: '24px' }} onSubmit={handleSave}>
                {msg.text && (
-                  <div style={{ padding: '12px', background: msg.type==='success'?'var(--success-bg)':'var(--danger-bg)', color: msg.type==='success'?'var(--success)':'var(--danger)', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ padding: '12px', background: msg.type==='success'?'var(--success-bg)':'var(--danger-bg)', color: msg.type==='success'?'var(--success)':'var(--danger)', borderRadius: 'var(--r-md)', marginBottom: '16px' }}>
                      {msg.text}
                   </div>
                )}
 
-               <div style={{ background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+               <div style={{ background: 'var(--info-bg)', border: '1px solid var(--info-border)', borderRadius: 'var(--r-md)', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                  <span style={{ fontSize: '18px', lineHeight: 1 }}>🔔</span>
                  <div style={{ fontSize: '13px', color: 'var(--info)' }}>
                    <strong>System Alerts</strong><br />
@@ -1383,13 +1383,13 @@ function SettingsView({ token }) {
 
                <div className="form-group">
                   <label>Email Address</label>
-                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)'}}/>
+                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@company.com" style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border)'}}/>
                   <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--text-faint)' }}>Used for system notifications and summaries.</p>
                </div>
                
                <div className="form-group" style={{ marginTop: '16px' }}>
                   <label>Personal WhatsApp Number</label>
-                  <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 919876543210" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)'}}/>
+                  <input type="text" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="e.g. 919876543210" style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border)'}}/>
                   <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--text-faint)' }}>Include country code (e.g. 91xxxxxxxxxx).</p>
                </div>
 
@@ -1477,7 +1477,7 @@ function ClinicDashboard({ ssoToken }) {
   }, [ssoToken]);
 
   const connected = status && status.status === 'connected';
-  const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px 24px' };
+  const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: '20px 24px' };
 
   if (error) {
     return (
@@ -1496,7 +1496,7 @@ function ClinicDashboard({ ssoToken }) {
       <div style={{ maxWidth: 920, margin: '0 auto' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <div style={{ background: 'var(--brand)', color: 'var(--surface)', display: 'flex', padding: 8, borderRadius: 12 }}>
+          <div style={{ background: 'var(--brand)', color: 'var(--surface)', display: 'flex', padding: 8, borderRadius: 'var(--r-lg)' }}>
             <MessageCircle size={24} fill="currentColor" />
           </div>
           <div>
@@ -1521,7 +1521,7 @@ function ClinicDashboard({ ssoToken }) {
           <div style={{ ...card, marginBottom: 16, textAlign: 'center' }}>
             <h3 style={{ marginBottom: 8 }}>Link your WhatsApp</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>WhatsApp → Settings → Linked Devices → Link a Device, then scan:</p>
-            <img src={qr} alt="QR" style={{ width: 240, height: 240, border: '1px solid var(--border)', borderRadius: 12 }} />
+            <img src={qr} alt="QR" style={{ width: 240, height: 240, border: '1px solid var(--border)', borderRadius: 'var(--r-lg)' }} />
           </div>
         )}
 
@@ -1696,7 +1696,7 @@ function ContactsView({ token }) {
     finally { setSaving(false); }
   };
 
-  const inputStyle = { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)' };
+  const inputStyle = { width: '100%', padding: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' };
 
   return (
     <div className="view-container">
@@ -1730,7 +1730,7 @@ function ContactsView({ token }) {
         </div>
 
         {banner.text && (
-          <div style={{ margin: '0 0 16px', padding: '12px', background: banner.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)', color: banner.type === 'success' ? 'var(--success)' : 'var(--danger)', borderRadius: '8px' }}>
+          <div style={{ margin: '0 0 16px', padding: '12px', background: banner.type === 'success' ? 'var(--success-bg)' : 'var(--danger-bg)', color: banner.type === 'success' ? 'var(--success)' : 'var(--danger)', borderRadius: 'var(--r-md)' }}>
             {banner.text}
           </div>
         )}
@@ -1767,7 +1767,7 @@ function ContactsView({ token }) {
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <button title="Edit" onClick={() => setModal({ mode: 'edit', id: c.id, name: c.name || '', phone: c.phone })}
-                      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6, color: 'var(--text-muted)' }}>
+                      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 6, cursor: 'pointer', marginRight: 6, color: 'var(--text-muted)' }}>
                       <Pencil size={15} />
                     </button>
                     <button
@@ -1776,14 +1776,14 @@ function ContactsView({ token }) {
                       style={{
                         background: Number(c.opted_out) === 1 ? 'var(--success-bg)' : 'var(--surface-raised)',
                         border: `1px solid ${Number(c.opted_out) === 1 ? 'var(--success-border)' : 'var(--border)'}`,
-                        borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6,
+                        borderRadius: 'var(--r-md)', padding: 6, cursor: 'pointer', marginRight: 6,
                         color: Number(c.opted_out) === 1 ? 'var(--success)' : 'var(--text-muted)',
                       }}
                     >
                       <Ban size={15} />
                     </button>
                     <button title="Delete" onClick={() => deleteContact(c)}
-                      style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: 6, cursor: 'pointer', color: 'var(--danger)' }}>
+                      style={{ background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 'var(--r-md)', padding: 6, cursor: 'pointer', color: 'var(--danger)' }}>
                       <Trash2 size={15} />
                     </button>
                   </td>

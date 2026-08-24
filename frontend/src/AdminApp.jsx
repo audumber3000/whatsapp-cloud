@@ -42,11 +42,11 @@ function AdminLogin({ setToken }) {
       background: 'linear-gradient(135deg, var(--brand-deep) 0%, var(--text) 100%)',
     }}>
       <div style={{
-        background: 'white', borderRadius: '16px', padding: '40px', width: '100%', maxWidth: '400px',
+        background: 'white', borderRadius: 'var(--r-lg)', padding: '40px', width: '100%', maxWidth: '400px',
         boxShadow: '0 25px 50px rgba(0,0,0,0.4)',
       }}>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <div style={{ display: 'inline-flex', background: 'var(--brand-deep)', padding: '14px', borderRadius: '14px', marginBottom: '16px' }}>
+          <div style={{ display: 'inline-flex', background: 'var(--brand-deep)', padding: '14px', borderRadius: 'var(--r-lg)', marginBottom: '16px' }}>
             <ShieldAlert size={28} color="white" />
           </div>
           <h2 style={{ margin: 0, fontWeight: 700, fontSize: '22px', color: 'var(--brand-deep)' }}>Master Admin Panel</h2>
@@ -55,25 +55,25 @@ function AdminLogin({ setToken }) {
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {error && (
-            <div style={{ padding: '12px', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: '8px', fontSize: '14px' }}>{error}</div>
+            <div style={{ padding: '12px', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--r-md)', fontSize: '14px' }}>{error}</div>
           )}
           <div>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '13px', color: 'var(--text)' }}>Username</label>
             <input
               type="text" value={username} onChange={e => setUsername(e.target.value)} required
-              style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', fontSize: '14px', boxSizing: 'border-box' }}
             />
           </div>
           <div>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '13px', color: 'var(--text)' }}>Password</label>
             <input
               type="password" value={password} onChange={e => setPassword(e.target.value)} required
-              style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', fontSize: '14px', boxSizing: 'border-box' }}
             />
           </div>
           <button type="submit" style={{
             padding: '12px', background: 'var(--brand-deep)', color: 'white', border: 'none',
-            borderRadius: '8px', fontWeight: 600, fontSize: '15px', cursor: 'pointer', marginTop: '8px',
+            borderRadius: 'var(--r-md)', fontWeight: 600, fontSize: '15px', cursor: 'pointer', marginTop: '8px',
           }}>
             Sign In
           </button>
@@ -113,7 +113,7 @@ function AdminDashboard({ token, setToken }) {
   };
 
   const statCardStyle = (color) => ({
-    background: 'white', borderRadius: '12px', padding: '24px',
+    background: 'white', borderRadius: 'var(--r-lg)', padding: '24px',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)', borderLeft: `4px solid ${color}`,
     flex: 1, minWidth: '160px',
   });
@@ -130,10 +130,10 @@ function AdminDashboard({ token, setToken }) {
           WA Reach — Master Admin
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button onClick={fetchData} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+          <button onClick={fetchData} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
             <RefreshCw size={14} /> Refresh
           </button>
-          <button onClick={handleLogout} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+          <button onClick={handleLogout} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
             <LogOut size={14} /> Logout
           </button>
         </div>
@@ -171,7 +171,7 @@ function AdminDashboard({ token, setToken }) {
             </div>
 
             {/* Users Table */}
-            <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+            <div style={{ background: 'white', borderRadius: 'var(--r-lg)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--surface-raised)' }}>
                 <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--brand-deep)' }}>All User Accounts</h3>
                 <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '13px' }}>Platform-wide user overview</p>
@@ -193,12 +193,12 @@ function AdminDashboard({ token, setToken }) {
                         <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{user.email || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
                         <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{user.personal_whatsapp_number || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
                         <td style={{ padding: '14px 16px' }}>
-                          <span style={{ background: 'var(--info-bg)', color: 'var(--info)', padding: '3px 10px', borderRadius: '20px', fontWeight: 600, fontSize: '13px' }}>
+                          <span style={{ background: 'var(--info-bg)', color: 'var(--info)', padding: '3px 10px', borderRadius: 'var(--r-full)', fontWeight: 600, fontSize: '13px' }}>
                             {user.total_automations}
                           </span>
                         </td>
                         <td style={{ padding: '14px 16px' }}>
-                          <span style={{ background: 'var(--success-bg)', color: 'var(--success)', padding: '3px 10px', borderRadius: '20px', fontWeight: 600, fontSize: '13px' }}>
+                          <span style={{ background: 'var(--success-bg)', color: 'var(--success)', padding: '3px 10px', borderRadius: 'var(--r-full)', fontWeight: 600, fontSize: '13px' }}>
                             {user.total_messages}
                           </span>
                         </td>
