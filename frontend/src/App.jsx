@@ -3,7 +3,7 @@ import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Search, LogOut, Link2Off,
   CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
-  PartyPopper, Palette, Upload, Eye, Send, Paperclip
+  Upload, Paperclip, Users, Pencil
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -73,7 +73,16 @@ const TIMEZONES = [
   { label: 'GMT+12:00 (Auckland)', offset: -720 },
 ];
 
+// Top-level router: clinic SSO dashboard vs the normal app.
 function App() {
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/clinic')) {
+    const ssoToken = new URLSearchParams(window.location.search).get('token');
+    return <ClinicDashboard ssoToken={ssoToken} />;
+  }
+  return <MainApp />;
+}
+
+function MainApp() {
   const [token, setToken] = useState(localStorage.getItem('wa_token') || null);
   const [activeTab, setActiveTab] = useState('dashboard');
 
@@ -199,11 +208,11 @@ function App() {
             Automations
           </div>
           <div
-            className={`nav-item ${activeTab === 'festivals' ? 'active' : ''}`}
-            onClick={() => setActiveTab('festivals')}
+            className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('contacts')}
           >
-            <PartyPopper size={20} />
-            Festival Status
+            <Users size={20} />
+            Contacts
           </div>
           <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
@@ -244,7 +253,7 @@ function App() {
               </>
             )}
             {activeTab === 'automations' && 'Manage Automations'}
-            {activeTab === 'festivals' && 'Festival Status'}
+            {activeTab === 'contacts' && 'Contacts'}
             {activeTab === 'logs' && 'Message Logs'}
             {activeTab === 'settings' && 'User Settings'}
           </div>
@@ -265,7 +274,7 @@ function App() {
         </div>
 
         <div className="page-content">
-          {!isLinked && activeTab !== 'settings' && activeTab !== 'festivals' ? (
+          {!isLinked && activeTab !== 'settings' && activeTab !== 'contacts' ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -293,7 +302,7 @@ function App() {
             <>
               {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} />}
               {activeTab === 'automations' && <AutomationsView token={token} />}
-              {activeTab === 'festivals' && <FestivalsView token={token} isLinked={isLinked} setActiveTab={setActiveTab} />}
+              {activeTab === 'contacts' && <ContactsView token={token} />}
               {activeTab === 'logs' && <LogsView token={token} />}
               {activeTab === 'settings' && <SettingsView token={token} />}
             </>
@@ -1201,22 +1210,6 @@ function SettingsView({ token }) {
                   Account Settings
                 </button>
                 <button
-                  onClick={() => setActiveTab('brandkit')}
-                  style={{
-                    padding: '8px 4px 12px',
-                    border: 'none',
-                    background: 'none',
-                    color: activeTab === 'brandkit' ? '#25d366' : '#64748b',
-                    borderBottom: activeTab === 'brandkit' ? '2px solid #25d366' : '2px solid transparent',
-                    fontWeight: activeTab === 'brandkit' ? '600' : '500',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  Brand Kit
-                </button>
-                <button
                   onClick={() => setActiveTab('logs')}
                   style={{ 
                     padding: '8px 4px 12px', 
@@ -1235,9 +1228,7 @@ function SettingsView({ token }) {
              </div>
            </div>
 
-           {activeTab === 'brandkit' ? (
-             <BrandKitForm token={token} />
-           ) : activeTab === 'account' ? (
+           {activeTab === 'account' ? (
              <form style={{ padding: '24px' }} onSubmit={handleSave}>
                {msg.text && (
                   <div style={{ padding: '12px', background: msg.type==='success'?'#dcfce7':'#fee2e2', color: msg.type==='success'?'#15803d':'#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
@@ -1310,260 +1301,246 @@ function SettingsView({ token }) {
   );
 }
 
-// --- BRAND KIT FORM (inside Settings) ---
-function BrandKitForm({ token }) {
-  const [kit, setKit] = useState({
-    clinic_name: '', tagline: '', phone: '', address: '',
-    primary_color: '#075E54', secondary_color: '#25D366', logo_data: null,
-    template_id: 'festive-classic', timezone_offset: -330, post_hour: 9,
-    auto_post: 1, send_to_contacts: 0
-  });
-  const [msg, setMsg] = useState({ text: '', type: '' });
-  const [saving, setSaving] = useState(false);
+// --- READ-ONLY CLINIC DASHBOARD (SSO from MolarPlus) ---
+function ClinicDashboard({ ssoToken }) {
+  const [status, setStatus] = useState(null);
+  const [qr, setQr] = useState(null);
+  const [stats, setStats] = useState({});
+  const [messages, setMessages] = useState([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetch(`${API_URL}/brand-kit`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(d => setKit(prev => ({ ...prev, ...d })))
-      .catch(console.error);
-  }, [token]);
+  const authHeaders = { 'Authorization': `Bearer ${ssoToken}` };
 
-  const set = (k, v) => setKit(prev => ({ ...prev, [k]: v }));
-
-  const handleLogo = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 4 * 1024 * 1024) { setMsg({ text: 'Logo must be under 4MB.', type: 'error' }); return; }
-    const reader = new FileReader();
-    reader.onload = () => set('logo_data', reader.result);
-    reader.readAsDataURL(file);
+  const loadStatus = () => {
+    fetch(`${API_URL}/clinic/status`, { headers: authHeaders })
+      .then(r => { if (r.status === 401 || r.status === 403) throw new Error('expired'); return r.json(); })
+      .then(d => { setStatus(d); if (!d || d.status !== 'connected') loadQr(); })
+      .catch(e => setError(e.message === 'expired' ? 'This link has expired. Please reopen it from MolarPlus.' : 'Could not load status.'));
+  };
+  const loadQr = () => {
+    fetch(`${API_URL}/clinic/qr`, { headers: authHeaders }).then(r => r.json()).then(d => setQr(d.qr)).catch(() => {});
+  };
+  const loadStats = () => {
+    fetch(`${API_URL}/clinic/stats`, { headers: authHeaders }).then(r => r.json()).then(setStats).catch(() => {});
+  };
+  const loadMessages = () => {
+    fetch(`${API_URL}/clinic/messages?limit=25`, { headers: authHeaders }).then(r => r.json())
+      .then(d => setMessages(d.data || [])).catch(() => {});
   };
 
-  const handleSave = async (e) => {
+  useEffect(() => {
+    if (!ssoToken) { setError('Missing access token.'); setLoading(false); return; }
+    loadStatus(); loadStats(); loadMessages();
+    setLoading(false);
+    // poll status while pairing / for live updates
+    const t = setInterval(() => { loadStatus(); }, 6000);
+    const t2 = setInterval(() => { loadStats(); loadMessages(); }, 20000);
+    return () => { clearInterval(t); clearInterval(t2); };
+  }, [ssoToken]);
+
+  const connected = status && status.status === 'connected';
+  const card = { background: '#fff', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px 24px' };
+
+  if (error) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-color)', padding: 24 }}>
+        <div style={{ ...card, maxWidth: 420, textAlign: 'center' }}>
+          <AlertTriangle size={32} color="var(--danger)" />
+          <h3 style={{ margin: '12px 0 6px' }}>Can’t open dashboard</h3>
+          <p style={{ color: '#64748b', fontSize: 14 }}>{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-color)', padding: '24px' }}>
+      <div style={{ maxWidth: 920, margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <div style={{ background: '#25D366', color: '#fff', display: 'flex', padding: 8, borderRadius: 12 }}>
+            <MessageCircle size={24} fill="currentColor" />
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: '#1e293b' }}>WhatsApp by WA Reach</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Read-only overview {status && status.phone_number ? `· +${status.phone_number}` : ''}</div>
+          </div>
+        </div>
+
+        {/* Connection status */}
+        <div style={{ ...card, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: connected ? 'var(--primary)' : 'var(--danger)' }} />
+            <div>
+              <div style={{ fontWeight: 600, color: '#1e293b' }}>{connected ? 'Connected' : (status ? status.status : 'Loading…')}</div>
+              <div style={{ fontSize: 13, color: '#64748b' }}>{connected ? `Linked as +${status.phone_number}` : 'Scan the QR to link your WhatsApp number'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* QR if not connected */}
+        {!connected && qr && (
+          <div style={{ ...card, marginBottom: 16, textAlign: 'center' }}>
+            <h3 style={{ marginBottom: 8 }}>Link your WhatsApp</h3>
+            <p style={{ color: '#64748b', fontSize: 14, marginBottom: 16 }}>WhatsApp → Settings → Linked Devices → Link a Device, then scan:</p>
+            <img src={qr} alt="QR" style={{ width: 240, height: 240, border: '1px solid var(--border-color)', borderRadius: 12 }} />
+          </div>
+        )}
+
+        {/* Stats */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
+          {[
+            { label: 'Total sent', value: stats.sent || 0, color: 'var(--primary)' },
+            { label: 'Delivered', value: stats.delivered || 0, color: '#0ea5e9' },
+            { label: 'Read', value: stats.read || 0, color: '#16a34a' },
+            { label: 'Failed', value: stats.failed || 0, color: 'var(--danger)' },
+            { label: 'Today', value: stats.today || 0, color: '#64748b' },
+          ].map(s => (
+            <div key={s.label} style={{ ...card, padding: '16px 18px' }}>
+              <div style={{ fontSize: 12, color: '#64748b' }}>{s.label}</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Message log */}
+        <div style={{ ...card, padding: 0 }}>
+          <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border-color)', fontWeight: 600, color: '#1e293b' }}>Recent messages</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="logs-table">
+              <thead>
+                <tr><th>To</th><th>Message</th><th>Status</th><th>Time</th></tr>
+              </thead>
+              <tbody>
+                {messages.length === 0 ? (
+                  <tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>No messages yet.</td></tr>
+                ) : messages.map(m => (
+                  <tr key={m.id}>
+                    <td>+{m.to_number}</td>
+                    <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {m.has_media ? '📎 ' : ''}{m.body || (m.has_media ? '[attachment]' : '')}
+                    </td>
+                    <td><span className={`badge badge-${m.status}`}>{m.status}</span></td>
+                    <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(m.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 16 }}>
+          Read-only view · powered by WA Reach
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- CONTACTS VIEW ---
+function ContactsView({ token }) {
+  const [contacts, setContacts] = useState([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [banner, setBanner] = useState({ text: '', type: '' });
+  const [modal, setModal] = useState(null); // { mode:'add'|'edit', id?, name, phone }
+  const [importText, setImportText] = useState('');
+  const [showImport, setShowImport] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const authHeaders = { 'Authorization': `Bearer ${token}` };
+
+  const fetchContacts = (q = '') => {
+    setLoading(true);
+    fetch(`${API_URL}/contacts${q ? `?search=${encodeURIComponent(q)}` : ''}`, { headers: authHeaders })
+      .then(r => r.json())
+      .then(d => { setContacts(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchContacts(); }, [token]);
+
+  // Debounced search
+  useEffect(() => {
+    const t = setTimeout(() => fetchContacts(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const flash = (text, type = 'success') => { setBanner({ text, type }); setTimeout(() => setBanner({ text: '', type: '' }), 4000); };
+
+  const saveContact = async (e) => {
     e.preventDefault();
+    if (!modal.phone.trim()) return flash('Phone number is required', 'error');
     setSaving(true);
-    setMsg({ text: '', type: '' });
+    const isEdit = modal.mode === 'edit';
     try {
-      const res = await fetch(`${API_URL}/brand-kit`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...kit,
-          timezone_offset: parseInt(kit.timezone_offset),
-          post_hour: parseInt(kit.post_hour),
-          auto_post: kit.auto_post ? 1 : 0,
-          send_to_contacts: kit.send_to_contacts ? 1 : 0
-        })
+      const res = await fetch(`${API_URL}/contacts${isEdit ? `/${modal.id}` : ''}`, {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: modal.name, phone: modal.phone })
       });
-      if (res.ok) setMsg({ text: 'Brand Kit saved! Your festival images will use these details.', type: 'success' });
-      else setMsg({ text: 'Failed to save Brand Kit.', type: 'error' });
-    } catch (err) {
-      setMsg({ text: err.message, type: 'error' });
-    } finally {
-      setSaving(false);
-    }
+      const d = await res.json();
+      if (!res.ok) return flash(d.error || 'Failed to save', 'error');
+      setModal(null);
+      flash(isEdit ? 'Contact updated' : 'Contact added');
+      fetchContacts(search.trim());
+    } catch (err) { flash('Failed to save', 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const deleteContact = async (c) => {
+    if (!window.confirm(`Delete ${c.name || c.phone}?`)) return;
+    const res = await fetch(`${API_URL}/contacts/${c.id}`, { method: 'DELETE', headers: authHeaders });
+    if (res.ok) { flash('Contact deleted'); fetchContacts(search.trim()); }
+    else flash('Failed to delete', 'error');
+  };
+
+  // Parse pasted text: each line "name, phone" or "phone" (commas or tabs as separators)
+  const runImport = async () => {
+    const rows = importText.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+      const parts = line.split(/[,\t]/).map(s => s.trim());
+      if (parts.length >= 2) return { name: parts[0], phone: parts[1] };
+      return { name: '', phone: parts[0] };
+    });
+    if (rows.length === 0) return flash('Nothing to import', 'error');
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/contacts/bulk`, {
+        method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contacts: rows })
+      });
+      const d = await res.json();
+      if (!res.ok) return flash(d.error || 'Import failed', 'error');
+      setShowImport(false); setImportText('');
+      flash(`Imported ${d.added} contact${d.added === 1 ? '' : 's'}${d.skipped ? `, skipped ${d.skipped}` : ''}`);
+      fetchContacts(search.trim());
+    } catch (e) { flash('Import failed', 'error'); }
+    finally { setSaving(false); }
   };
 
   const inputStyle = { width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)' };
 
   return (
-    <form style={{ padding: '24px' }} onSubmit={handleSave}>
-      {msg.text && (
-        <div style={{ padding: '12px', background: msg.type === 'success' ? '#dcfce7' : '#fee2e2', color: msg.type === 'success' ? '#15803d' : '#b91c1c', borderRadius: '8px', marginBottom: '16px' }}>
-          {msg.text}
-        </div>
-      )}
-
-      <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-        <Palette size={18} color="#0369a1" style={{ flexShrink: 0, marginTop: 2 }} />
-        <div style={{ fontSize: '13px', color: '#0369a1' }}>
-          <strong>Your Brand</strong><br />
-          These details are baked into every festival greeting image — consistently, every time.
-        </div>
-      </div>
-
-      {/* Logo */}
-      <div className="form-group">
-        <label>Clinic Logo</label>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '6px' }}>
-          <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-            {kit.logo_data ? <img src={kit.logo_data} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <MessageCircle size={28} color="#94a3b8" />}
-          </div>
-          <label className="btn-outline" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-            <Upload size={16} /> Upload Logo
-            <input type="file" accept="image/*" onChange={handleLogo} style={{ display: 'none' }} />
-          </label>
-          {kit.logo_data && <button type="button" className="btn-text" style={{ color: 'var(--danger)' }} onClick={() => set('logo_data', null)}>Remove</button>}
-        </div>
-      </div>
-
-      <div className="form-group" style={{ marginTop: '16px' }}>
-        <label>Clinic Name</label>
-        <input style={inputStyle} value={kit.clinic_name || ''} onChange={e => set('clinic_name', e.target.value)} placeholder="e.g. Smile Dental Care" />
-      </div>
-      <div className="form-group" style={{ marginTop: '16px' }}>
-        <label>Tagline (optional)</label>
-        <input style={inputStyle} value={kit.tagline || ''} onChange={e => set('tagline', e.target.value)} placeholder="e.g. Your trusted family dentist" />
-      </div>
-
-      <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
-        <div className="form-group" style={{ flex: 1, margin: 0 }}>
-          <label>Phone</label>
-          <input style={inputStyle} value={kit.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="+91 98765 43210" />
-        </div>
-        <div className="form-group" style={{ flex: 1, margin: 0 }}>
-          <label>Address (short)</label>
-          <input style={inputStyle} value={kit.address || ''} onChange={e => set('address', e.target.value)} placeholder="MG Road, Pune" />
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
-        <div className="form-group" style={{ flex: 1, margin: 0 }}>
-          <label>Primary Color</label>
-          <input type="color" value={kit.primary_color || '#075E54'} onChange={e => set('primary_color', e.target.value)} style={{ width: '100%', height: 42, borderRadius: 6, border: '1px solid var(--border-color)', background: '#fff' }} />
-        </div>
-        <div className="form-group" style={{ flex: 1, margin: 0 }}>
-          <label>Secondary Color</label>
-          <input type="color" value={kit.secondary_color || '#25D366'} onChange={e => set('secondary_color', e.target.value)} style={{ width: '100%', height: 42, borderRadius: 6, border: '1px solid var(--border-color)', background: '#fff' }} />
-        </div>
-      </div>
-      <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px' }}>
-        The primary color is used for your business name and the address strip overlaid on each festival poster.
-      </p>
-
-      <div style={{ borderTop: '1px solid var(--border-color)', margin: '24px 0 16px' }} />
-      <h4 style={{ margin: '0 0 12px', color: '#334155' }}>Auto-posting</h4>
-
-      <div style={{ display: 'flex', gap: '16px' }}>
-        <div className="form-group" style={{ flex: 2, margin: 0 }}>
-          <label>Timezone</label>
-          <select value={kit.timezone_offset} onChange={e => set('timezone_offset', parseInt(e.target.value))} style={{ ...inputStyle, background: '#fff' }}>
-            {TIMEZONES.map(tz => <option key={tz.offset} value={tz.offset}>{tz.label}</option>)}
-          </select>
-        </div>
-        <div className="form-group" style={{ flex: 1, margin: 0 }}>
-          <label>Post at (local)</label>
-          <select value={kit.post_hour} onChange={e => set('post_hour', parseInt(e.target.value))} style={{ ...inputStyle, background: '#fff' }}>
-            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
-          </select>
-        </div>
-      </div>
-
-      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '16px', cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!kit.auto_post} onChange={e => set('auto_post', e.target.checked ? 1 : 0)} />
-        <span style={{ fontSize: '14px' }}>Automatically post festival greetings to my WhatsApp <strong>Status</strong> on the festival date</span>
-      </label>
-      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px', cursor: 'pointer' }}>
-        <input type="checkbox" checked={!!kit.send_to_contacts} onChange={e => set('send_to_contacts', e.target.checked ? 1 : 0)} />
-        <span style={{ fontSize: '14px' }}>Also send the greeting image to all my <strong>contacts</strong> (use carefully)</span>
-      </label>
-
-      <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
-        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Brand Kit'}</button>
-      </div>
-    </form>
-  );
-}
-
-// --- FESTIVALS VIEW ---
-function FestivalsView({ token, isLinked, setActiveTab }) {
-  const [festivals, setFestivals] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState({ url: null, name: '', loading: false });
-  const [postingId, setPostingId] = useState(null);
-  const [banner, setBanner] = useState({ text: '', type: '' });
-
-  const fetchFestivals = () => {
-    fetch(`${API_URL}/festivals`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(d => { setFestivals(Array.isArray(d) ? d : []); setLoading(false); })
-      .catch(() => setLoading(false));
-  };
-
-  useEffect(() => { fetchFestivals(); }, [token]);
-
-  const fmtDate = (d) => {
-    try { return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
-    catch { return d; }
-  };
-
-  const toggle = async (id) => {
-    setFestivals(fs => fs.map(f => f.id === id ? { ...f, enabled: f.enabled ? 0 : 1 } : f));
-    await fetch(`${API_URL}/festivals/${id}/toggle`, { method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` } }).catch(() => {});
-  };
-
-  const showPreview = async (f) => {
-    setPreview({ url: null, name: f.name, loading: true });
-    try {
-      const res = await fetch(`${API_URL}/festivals/${f.id}/preview`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setPreview({ url: null, name: '', loading: false });
-        setBanner({ text: err.error || 'Could not generate preview.', type: 'error' });
-        return;
-      }
-      const blob = await res.blob();
-      setPreview({ url: URL.createObjectURL(blob), name: f.name, loading: false });
-    } catch (e) {
-      setPreview({ url: null, name: '', loading: false });
-      setBanner({ text: 'Could not generate preview.', type: 'error' });
-    }
-  };
-
-  const closePreview = () => {
-    if (preview.url) URL.revokeObjectURL(preview.url);
-    setPreview({ url: null, name: '', loading: false });
-  };
-
-  const uploadPoster = (f, file) => {
-    if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { setBanner({ text: 'Poster must be under 8MB.', type: 'error' }); return; }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const res = await fetch(`${API_URL}/festivals/${f.id}/poster`, {
-          method: 'PUT',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poster_image: reader.result })
-        });
-        if (res.ok) { setBanner({ text: `Poster uploaded for "${f.name}".`, type: 'success' }); fetchFestivals(); }
-        else setBanner({ text: 'Failed to upload poster.', type: 'error' });
-      } catch (e) { setBanner({ text: 'Failed to upload poster.', type: 'error' }); }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const postNow = async (f) => {
-    if (!window.confirm(`Post "${f.name}" to your WhatsApp Status now?`)) return;
-    setPostingId(f.id);
-    setBanner({ text: '', type: '' });
-    try {
-      const res = await fetch(`${API_URL}/festivals/${f.id}/post-now`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toContacts: false })
-      });
-      const d = await res.json();
-      if (res.ok) { setBanner({ text: `Posted "${f.name}" to ${d.channels?.join(' & ') || 'Status'}.`, type: 'success' }); fetchFestivals(); }
-      else setBanner({ text: d.error || 'Failed to post.', type: 'error' });
-    } catch (e) {
-      setBanner({ text: 'Failed to post.', type: 'error' });
-    } finally {
-      setPostingId(null);
-    }
-  };
-
-  return (
     <div className="view-container">
-      <div className="card full-width">
+      <div className="card full-width" style={{ display: 'flex', flexDirection: 'column', minHeight: '500px' }}>
         <div className="card-header" style={{ alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div className="card-title-group">
-            <h3>Festival Greetings</h3>
-            <p className="card-desc">Branded festival images auto-posted to your WhatsApp Status on the day.</p>
+            <h3>Contacts</h3>
+            <p className="card-desc">{contacts.length} contact{contacts.length === 1 ? '' : 's'} — manage your patient list.</p>
           </div>
-          <button className="btn-outline" onClick={() => setActiveTab('settings')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-            <Palette size={16} /> Edit Brand Kit
-          </button>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="search-box" style={{ margin: 0 }}>
+              <Search size={16} />
+              <input type="text" placeholder="Search name or number…" value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <button className="btn-outline" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setShowImport(true)}>
+              <Upload size={16} /> Import
+            </button>
+            <button className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setModal({ mode: 'add', name: '', phone: '' })}>
+              <Plus size={16} /> Add Contact
+            </button>
+          </div>
         </div>
 
         {banner.text && (
@@ -1572,77 +1549,76 @@ function FestivalsView({ token, isLinked, setActiveTab }) {
           </div>
         )}
 
-        {!isLinked && (
-          <div className="alert-box warning" style={{ marginBottom: '16px' }}>
-            <AlertTriangle size={18} />
-            <div>
-              <strong>WhatsApp not connected</strong>
-              <p>You can preview and configure festivals now. Connect WhatsApp to enable auto-posting.</p>
-            </div>
-          </div>
-        )}
-
-        {loading ? (
-          <p style={{ color: '#94a3b8', fontSize: 14 }}>Loading festivals…</p>
-        ) : festivals.length === 0 ? (
-          <p style={{ color: '#94a3b8', fontSize: 14 }}>No upcoming festivals in the calendar.</p>
-        ) : (
-          <div className="automation-grid">
-            {festivals.map(f => (
-              <div className="automation-card" key={f.id} style={{ opacity: f.enabled ? 1 : 0.6 }}>
-                <div className="auto-card-top">
-                  <div className="auto-icon" style={{ fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span>{f.emoji || '🎉'}</span>
-                  </div>
-                  {f.posted > 0
-                    ? <div className="status-label active">Posted</div>
-                    : <div className={`status-label ${f.enabled ? 'active' : 'paused'}`}>{f.enabled ? 'Scheduled' : 'Off'}</div>}
-                </div>
-                <h4>{f.name}</h4>
-                <div className="auto-card-stats">
-                  <div><span className="lbl">Date:</span> {fmtDate(f.festival_date)}</div>
-                  <div style={{ fontSize: '12px', marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '6px', color: f.has_poster ? '#15803d' : '#b45309' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.has_poster ? '#16a34a' : '#f59e0b', display: 'inline-block' }} />
-                    {f.has_poster ? 'Poster uploaded' : 'No poster yet'}
-                  </div>
-                </div>
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '12px 0 4px', cursor: 'pointer', fontSize: '13px', color: '#475569' }}>
-                  <input type="checkbox" checked={!!f.enabled} onChange={() => toggle(f.id)} />
-                  Auto-post this festival
-                </label>
-
-                <label className="btn-outline" style={{ width: '100%', marginTop: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer' }}>
-                  <Upload size={16} /> {f.has_poster ? 'Replace Poster' : 'Upload Poster'}
-                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => uploadPoster(f, e.target.files?.[0])} />
-                </label>
-
-                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                  <button className="btn-outline" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={() => showPreview(f)}>
-                    <Eye size={16} /> Preview
-                  </button>
-                  <button className="btn-outline" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: 'var(--primary)', borderColor: 'var(--primary)' }} disabled={!isLinked || postingId === f.id} onClick={() => postNow(f)}>
-                    <Send size={16} /> {postingId === f.id ? 'Posting…' : 'Post Now'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <div style={{ flexGrow: 1, overflowX: 'auto' }}>
+          <table className="logs-table">
+            <thead>
+              <tr><th>Name</th><th>Phone</th><th style={{ width: 120, textAlign: 'right' }}>Actions</th></tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={3} style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>Loading…</td></tr>
+              ) : contacts.length === 0 ? (
+                <tr><td colSpan={3} style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>
+                  {search ? 'No contacts match your search.' : 'No contacts yet. Add one or import a list.'}
+                </td></tr>
+              ) : contacts.map(c => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 500 }}>{c.name || <span style={{ color: '#94a3b8' }}>—</span>}</td>
+                  <td>+{c.phone}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button title="Edit" onClick={() => setModal({ mode: 'edit', id: c.id, name: c.name || '', phone: c.phone })}
+                      style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 6, padding: 6, cursor: 'pointer', marginRight: 6, color: '#475569' }}>
+                      <Pencil size={15} />
+                    </button>
+                    <button title="Delete" onClick={() => deleteContact(c)}
+                      style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: 6, cursor: 'pointer', color: 'var(--danger)' }}>
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Preview Modal */}
-      {(preview.url || preview.loading) && (
-        <div className="modal-overlay" onClick={closePreview}>
-          <div className="modal-content" style={{ maxWidth: '420px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ marginBottom: '16px' }}>{preview.name} — Preview</h2>
-            {preview.loading ? (
-              <div style={{ padding: '60px', color: '#94a3b8' }}>Generating image…</div>
-            ) : (
-              <img src={preview.url} alt="preview" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-color)' }} />
-            )}
-            <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
-              <button className="btn-primary" onClick={closePreview}>Close</button>
+      {/* Add/Edit modal */}
+      {modal && (
+        <div className="modal-overlay" onClick={() => setModal(null)}>
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ marginBottom: 16 }}>{modal.mode === 'edit' ? 'Edit Contact' : 'Add Contact'}</h2>
+            <form onSubmit={saveContact} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Name</label>
+                <input style={inputStyle} value={modal.name} onChange={e => setModal({ ...modal, name: e.target.value })} placeholder="e.g. Priya Sharma" />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label>Phone (with country code)</label>
+                <input style={inputStyle} value={modal.phone} onChange={e => setModal({ ...modal, phone: e.target.value })} placeholder="e.g. 919876543210" />
+              </div>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-outline" onClick={() => setModal(null)}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Import modal */}
+      {showImport && (
+        <div className="modal-overlay" onClick={() => setShowImport(false)}>
+          <div className="modal-content" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ marginBottom: 8 }}>Import Contacts</h2>
+            <p style={{ color: '#64748b', fontSize: 13, marginBottom: 12 }}>
+              Paste one contact per line as <strong>Name, Number</strong> (or just the number). Country code included, e.g. <code>Priya, 919876543210</code>. Duplicates are skipped.
+            </p>
+            <textarea rows={8} value={importText} onChange={e => setImportText(e.target.value)}
+              placeholder={"Priya Sharma, 919876543210\nRahul, 919812345678\n918887776655"}
+              style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 13, resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button type="button" className="btn-outline" onClick={() => setShowImport(false)}>Cancel</button>
+              <button type="button" className="btn-primary" disabled={saving} onClick={runImport}>{saving ? 'Importing…' : 'Import'}</button>
             </div>
           </div>
         </div>

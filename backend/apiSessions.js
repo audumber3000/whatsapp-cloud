@@ -88,9 +88,13 @@ function startClient(sessionId) {
     if (existing && existing.client) return existing; // already running
 
     const client = buildClient(sessionId);
-    const rt = { client, status: 'connecting', qr: null, phone: null, msgLog: new Map(), resolveSignal: null };
+    const rt = { client, status: 'connecting', qr: null, phone: null, clinicId: null, msgLog: new Map(), resolveSignal: null };
     rt.signal = new Promise((resolve) => { rt.resolveSignal = resolve; });
     runtime.set(sessionId, rt);
+
+    // Cache clinic_id for message logging (sends happen after this resolves).
+    dbGet('SELECT clinic_id FROM api_sessions WHERE session_id = ?', [sessionId])
+        .then((r) => { if (r) rt.clinicId = r.clinic_id; }).catch(() => {});
 
     client.on('qr', async (qr) => {
         try { rt.qr = await qrcode.toDataURL(qr); } catch (e) { rt.qr = null; }
@@ -121,13 +125,21 @@ function startClient(sessionId) {
         fireWebhook({ session_id: sessionId, event: 'disconnected', status: 'disconnected', error: String(reason || '') });
     });
 
-    // Delivery receipts: report message_status for sends that carried a log_id.
+    // Delivery receipts: update the local log and report status back to MolarPlus.
     client.on('message_ack', (msg, ack) => {
-        const logId = rt.msgLog.get(msg.id && msg.id._serialized);
-        if (logId === undefined) return;
+        const waId = msg.id && msg.id._serialized;
         const message_status = ackToStatus(ack);
         if (!message_status) return;
-        fireWebhook({ session_id: sessionId, log_id: logId, message_status });
+        // Update the clinic-dashboard log
+        if (waId) {
+            dbRun('UPDATE api_messages SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE wa_message_id = ?',
+                [message_status, waId]).catch(() => {});
+        }
+        // Webhook for sends that carried a MolarPlus log_id
+        const logId = rt.msgLog.get(waId);
+        if (logId !== undefined) {
+            fireWebhook({ session_id: sessionId, log_id: logId, message_status });
+        }
     });
 
     client.initialize().catch(async (err) => {
@@ -189,6 +201,11 @@ async function authorize(sessionId, apiKey) {
     return !!(row && apiKey && row.api_key === apiKey);
 }
 
+async function getClinicId(sessionId) {
+    const row = await dbGet('SELECT clinic_id FROM api_sessions WHERE session_id = ?', [sessionId]);
+    return row ? row.clinic_id : null;
+}
+
 // POST /api/sessions/:id/send
 async function sendMessage(sessionId, { to, text, media_url, log_id }) {
     const rt = runtime.get(sessionId);
@@ -220,6 +237,14 @@ async function sendMessage(sessionId, { to, text, media_url, log_id }) {
     if (messageId && log_id !== undefined && log_id !== null) {
         rt.msgLog.set(messageId, log_id); // for delivery-receipt webhooks
     }
+
+    // Persist for the read-only clinic dashboard
+    dbRun(
+        `INSERT INTO api_messages (session_id, clinic_id, to_number, body, has_media, wa_message_id, log_id, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')`,
+        [sessionId, rt.clinicId, digits, text || '', media_url ? 1 : 0, messageId, (log_id ?? null)]
+    ).catch(() => {});
+
     return messageId;
 }
 
@@ -252,5 +277,5 @@ async function bootAll() {
 }
 
 module.exports = {
-    createOrRestartSession, getQr, getStatus, authorize, sendMessage, removeSession, bootAll,
+    createOrRestartSession, getQr, getStatus, authorize, getClinicId, sendMessage, removeSession, bootAll,
 };

@@ -64,4 +64,8 @@ COPY --from=frontend-builder /app/backend/public ./public
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# Entrypoint redirects data/ sessions/ uploads/ onto the single Railway volume
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+CMD ["/usr/local/bin/docker-entrypoint.sh"]

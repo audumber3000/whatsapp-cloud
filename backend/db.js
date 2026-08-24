@@ -129,6 +129,23 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
             )`);
             db.run(`CREATE INDEX IF NOT EXISTS idx_api_sessions_clinic ON api_sessions(clinic_id)`);
 
+            // Log of messages sent via the MolarPlus API (for the read-only clinic dashboard).
+            db.run(`CREATE TABLE IF NOT EXISTS api_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                clinic_id INTEGER,
+                to_number TEXT,
+                body TEXT,
+                has_media INTEGER DEFAULT 0,
+                wa_message_id TEXT,
+                log_id INTEGER,
+                status TEXT DEFAULT 'sent',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_api_messages_session ON api_messages(session_id, id)`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_api_messages_waid ON api_messages(wa_message_id)`);
+
             // --- Media attachments (images / PDFs / video) for scheduled sends ---
             db.run(`CREATE TABLE IF NOT EXISTS media_attachments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,76 +160,10 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
             // Reminders can carry an optional attachment (message becomes the caption).
             db.run(`ALTER TABLE reminders ADD COLUMN media_id INTEGER`, (err) => {});
 
-            // --- Festival Status feature ---
-
-            // Brand Kit: one per clinic/user. Drives the branded overlay on every festival image.
-            db.run(`CREATE TABLE IF NOT EXISTS brand_kits (
-                user_id INTEGER PRIMARY KEY,
-                clinic_name TEXT,
-                tagline TEXT,
-                phone TEXT,
-                address TEXT,
-                primary_color TEXT DEFAULT '#075E54',
-                secondary_color TEXT DEFAULT '#25D366',
-                logo_data TEXT,
-                template_id TEXT DEFAULT 'festive-classic',
-                timezone_offset INTEGER DEFAULT -330,
-                post_hour INTEGER DEFAULT 9,
-                auto_post INTEGER DEFAULT 1,
-                send_to_contacts INTEGER DEFAULT 0,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )`);
-
-            // Global festival calendar (admin-maintained, explicit per-year dates).
-            db.run(`CREATE TABLE IF NOT EXISTS festivals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                festival_date TEXT NOT NULL,
-                greeting TEXT,
-                emoji TEXT,
-                accent_color TEXT DEFAULT '#E8A33D',
-                template_id TEXT DEFAULT 'festive-classic',
-                region TEXT DEFAULT 'IN',
-                UNIQUE(name, festival_date)
-            )`);
-            // The uploaded full poster artwork (base64 data-URI). The app only
-            // overlays the branded strip on top of this.
-            db.run(`ALTER TABLE festivals ADD COLUMN poster_image TEXT`, (err) => {});
-
-            // Per-clinic opt-out / overrides for a specific festival (absence of row = participate).
-            db.run(`CREATE TABLE IF NOT EXISTS festival_settings (
-                user_id INTEGER NOT NULL,
-                festival_id INTEGER NOT NULL,
-                enabled INTEGER DEFAULT 1,
-                PRIMARY KEY (user_id, festival_id)
-            )`);
-
-            // Idempotent log of festival posts so the scheduler never double-posts.
-            db.run(`CREATE TABLE IF NOT EXISTS festival_posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                festival_id INTEGER NOT NULL,
-                posted_date TEXT NOT NULL,
-                status TEXT DEFAULT 'posted',
-                channels TEXT,
-                error TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, festival_id, posted_date)
-            )`);
-
             // Helpful indexes for the per-minute scheduler scans.
-            db.run(`CREATE INDEX IF NOT EXISTS idx_festivals_date ON festivals(festival_date)`);
             db.run(`CREATE INDEX IF NOT EXISTS idx_autolog_status_time ON automation_logs(status, sent_time)`);
             db.run(`CREATE INDEX IF NOT EXISTS idx_reminders_status_time ON reminders(status, scheduled_time)`);
-
-            // Seed the festival calendar once (admin can edit/extend later).
-            db.get(`SELECT COUNT(*) as c FROM festivals`, (err, row) => {
-                if (!err && row && row.c === 0) {
-                    const { seedFestivals } = require('./festivals.seed');
-                    seedFestivals(db);
-                }
-            });
+            db.run(`CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id)`);
         });
     }
 });

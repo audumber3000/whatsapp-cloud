@@ -10,7 +10,6 @@ const jwt = require('jsonwebtoken');
 const db = require('./db');
 // We will import whatsapp and scheduler later
 const whatsappClient = require('./whatsapp');
-const festivalService = require('./festivalService');
 const apiSessions = require('./apiSessions');
 require('./scheduler');
 
@@ -45,6 +44,8 @@ const authenticateToken = (req, res, next) => {
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.sendStatus(403);
+        // Clinic SSO tokens are read-only and must not access user routes.
+        if (!user || user.scope === 'clinic' || !user.id) return res.sendStatus(403);
         req.user = user;
         next();
     });
@@ -205,125 +206,6 @@ app.delete('/api/media/:id', authenticateToken, (req, res) => {
     });
 });
 
-// --- Festival Status: Brand Kit ---
-app.get('/api/brand-kit', authenticateToken, (req, res) => {
-    db.get('SELECT * FROM brand_kits WHERE user_id = ?', [req.user.id], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(row || {
-            clinic_name: '', tagline: '', phone: '', address: '',
-            primary_color: '#075E54', secondary_color: '#25D366', logo_data: null,
-            template_id: 'festive-classic', timezone_offset: -330, post_hour: 9,
-            auto_post: 1, send_to_contacts: 0
-        });
-    });
-});
-
-app.put('/api/brand-kit', authenticateToken, (req, res) => {
-    const b = req.body || {};
-    // logo_data is a base64 data-URI; basic guard on type/size handled by json limit.
-    if (b.logo_data && !/^data:image\//.test(b.logo_data)) {
-        return res.status(400).json({ error: 'logo_data must be an image data-URI' });
-    }
-    const params = [
-        req.user.id, b.clinic_name || '', b.tagline || '', b.phone || '', b.address || '',
-        b.primary_color || '#075E54', b.secondary_color || '#25D366', b.logo_data || null,
-        b.template_id || 'festive-classic',
-        Number.isFinite(b.timezone_offset) ? b.timezone_offset : -330,
-        Number.isFinite(b.post_hour) ? b.post_hour : 9,
-        b.auto_post ? 1 : 0, b.send_to_contacts ? 1 : 0
-    ];
-    db.run(`
-        INSERT INTO brand_kits (user_id, clinic_name, tagline, phone, address, primary_color, secondary_color, logo_data, template_id, timezone_offset, post_hour, auto_post, send_to_contacts, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET
-            clinic_name=excluded.clinic_name, tagline=excluded.tagline, phone=excluded.phone, address=excluded.address,
-            primary_color=excluded.primary_color, secondary_color=excluded.secondary_color, logo_data=excluded.logo_data,
-            template_id=excluded.template_id, timezone_offset=excluded.timezone_offset, post_hour=excluded.post_hour,
-            auto_post=excluded.auto_post, send_to_contacts=excluded.send_to_contacts, updated_at=CURRENT_TIMESTAMP
-    `, params, (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Brand kit saved' });
-    });
-});
-
-// --- Festival Status: Calendar ---
-app.get('/api/festivals', authenticateToken, (req, res) => {
-    db.all(`
-        SELECT f.id, f.name, f.festival_date, f.greeting, f.emoji, f.accent_color, f.template_id, f.region,
-               (f.poster_image IS NOT NULL) as has_poster,
-               COALESCE(fs.enabled, 1) as enabled,
-               (SELECT COUNT(*) FROM festival_posts fp WHERE fp.user_id = ? AND fp.festival_id = f.id AND fp.status = 'posted') as posted
-        FROM festivals f
-        LEFT JOIN festival_settings fs ON fs.festival_id = f.id AND fs.user_id = ?
-        WHERE f.festival_date >= date('now', '-2 day')
-        ORDER BY f.festival_date ASC
-    `, [req.user.id, req.user.id], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
-    });
-});
-
-// Toggle a clinic's participation in a festival (upsert into festival_settings).
-app.patch('/api/festivals/:id/toggle', authenticateToken, (req, res) => {
-    const festivalId = parseInt(req.params.id);
-    db.run(`
-        INSERT INTO festival_settings (user_id, festival_id, enabled) VALUES (?, ?, 0)
-        ON CONFLICT(user_id, festival_id) DO UPDATE SET enabled = 1 - enabled
-    `, [req.user.id, festivalId], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        db.get('SELECT enabled FROM festival_settings WHERE user_id = ? AND festival_id = ?', [req.user.id, festivalId], (e, row) => {
-            res.json({ enabled: row ? row.enabled : 1 });
-        });
-    });
-});
-
-// Upload (or clear) the full poster artwork for a festival. The branded strip
-// is overlaid on top of this at render time.
-app.put('/api/festivals/:id/poster', authenticateToken, (req, res) => {
-    const festivalId = parseInt(req.params.id);
-    const poster = req.body.poster_image;
-    if (poster && !/^data:image\//.test(poster)) {
-        return res.status(400).json({ error: 'poster_image must be an image data-URI' });
-    }
-    db.run('UPDATE festivals SET poster_image = ? WHERE id = ?', [poster || null, festivalId], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: poster ? 'Poster uploaded' : 'Poster removed' });
-    });
-});
-
-// Live preview of the branded image (returns a PNG).
-app.get('/api/festivals/:id/preview', authenticateToken, async (req, res) => {
-    try {
-        const festival = await festivalService.getFestival(parseInt(req.params.id));
-        if (!festival) return res.status(404).json({ error: 'Festival not found' });
-        const { buf } = await festivalService.renderForUser(req.user.id, festival);
-        res.set('Content-Type', 'image/png');
-        res.send(buf);
-    } catch (e) {
-        if (e.code === 'NO_BRAND_KIT') return res.status(400).json({ error: 'Set up your Brand Kit first' });
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Manually post a festival image now (test / on-demand).
-app.post('/api/festivals/:id/post-now', authenticateToken, async (req, res) => {
-    try {
-        const festival = await festivalService.getFestival(parseInt(req.params.id));
-        if (!festival) return res.status(404).json({ error: 'Festival not found' });
-
-        const toContacts = !!req.body.toContacts;
-        const result = await festivalService.postFestivalForUser(req.user.id, festival, { toStatus: true, toContacts });
-        if (!result.ok) return res.status(400).json({ error: result.error || 'Failed to post' });
-
-        const today = new Date().toISOString().split('T')[0];
-        db.run(`INSERT OR REPLACE INTO festival_posts (user_id, festival_id, posted_date, status, channels) VALUES (?, ?, ?, 'posted', ?)`,
-            [req.user.id, festival.id, today, result.channels.join(',')]);
-        res.json({ message: 'Posted', channels: result.channels });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
 // --- API Endpoints ---
 app.get('/api/wa/status', authenticateToken, (req, res) => {
     const status = whatsappClient.getStatus(req.user.id);
@@ -350,23 +232,79 @@ app.post('/api/wa/disconnect', authenticateToken, async (req, res) => {
     }
 });
 
-// Get all contacts
+// Get all contacts (optional ?search= over name/phone)
 app.get('/api/contacts', authenticateToken, (req, res) => {
-    db.all('SELECT * FROM contacts WHERE user_id = ?', [req.user.id], (err, rows) => {
+    const search = (req.query.search || '').trim();
+    let sql = 'SELECT * FROM contacts WHERE user_id = ?';
+    const params = [req.user.id];
+    if (search) {
+        sql += ' AND (name LIKE ? OR phone LIKE ?)';
+        params.push(`%${search}%`, `%${search}%`);
+    }
+    sql += ' ORDER BY name COLLATE NOCASE ASC';
+    db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
 });
 
+const cleanPhone = (p) => String(p || '').replace(/[^\d]/g, '');
+
 // Add a contact
 app.post('/api/contacts', authenticateToken, (req, res) => {
-    const { name, phone } = req.body;
+    const name = (req.body.name || '').trim();
+    const phone = cleanPhone(req.body.phone);
+    if (!phone) return res.status(400).json({ error: 'A valid phone number is required' });
     db.run('INSERT INTO contacts (user_id, name, phone) VALUES (?, ?, ?)', [req.user.id, name, phone], function (err) {
         if (err) {
             if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Contact already exists for this user' });
             return res.status(500).json({ error: err.message });
         }
         res.json({ id: this.lastID, name, phone });
+    });
+});
+
+// Edit a contact
+app.put('/api/contacts/:id', authenticateToken, (req, res) => {
+    const name = (req.body.name || '').trim();
+    const phone = cleanPhone(req.body.phone);
+    if (!phone) return res.status(400).json({ error: 'A valid phone number is required' });
+    db.run('UPDATE contacts SET name = ?, phone = ? WHERE id = ? AND user_id = ?',
+        [name, phone, req.params.id, req.user.id], function (err) {
+            if (err) {
+                if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Another contact already uses this number' });
+                return res.status(500).json({ error: err.message });
+            }
+            if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+            res.json({ id: Number(req.params.id), name, phone });
+        });
+});
+
+// Delete a contact
+app.delete('/api/contacts/:id', authenticateToken, (req, res) => {
+    db.run('DELETE FROM contacts WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+        res.json({ message: 'Deleted' });
+    });
+});
+
+// Bulk import contacts. Accepts { contacts: [{name, phone}] }.
+app.post('/api/contacts/bulk', authenticateToken, (req, res) => {
+    const list = Array.isArray(req.body.contacts) ? req.body.contacts : [];
+    if (list.length === 0) return res.status(400).json({ error: 'No contacts provided' });
+
+    let added = 0, skipped = 0, processed = 0;
+    const done = () => { if (++processed === list.length) res.json({ added, skipped }); };
+    list.forEach((c) => {
+        const phone = cleanPhone(c.phone);
+        const name = (c.name || '').trim();
+        if (!phone) { skipped++; return done(); }
+        db.run('INSERT OR IGNORE INTO contacts (user_id, name, phone) VALUES (?, ?, ?)',
+            [req.user.id, name, phone], function (err) {
+                if (!err && this.changes > 0) added++; else skipped++;
+                done();
+            });
     });
 });
 
@@ -872,6 +810,83 @@ app.delete('/api/sessions/:id', async (req, res) => {
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+// --- Read-only clinic dashboard (SSO from MolarPlus) ---
+
+// Mint a short-lived dashboard token (auth: Bearer api_key). MolarPlus opens
+// `${WAREACH_PUBLIC_URL or this host}/clinic?token=<token>` for the clinic.
+app.post('/api/sessions/:id/dashboard-token', async (req, res) => {
+    const sessionId = req.params.id;
+    const authHeader = req.headers['authorization'] || '';
+    const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    try {
+        const ok = await apiSessions.authorize(sessionId, apiKey);
+        if (!ok) return res.status(401).json({ error: 'Invalid API key for this session' });
+        const clinicId = await apiSessions.getClinicId(sessionId);
+        const token = jwt.sign({ session_id: sessionId, clinic_id: clinicId, scope: 'clinic' }, JWT_SECRET, { expiresIn: '1h' });
+        const base = (process.env.WAREACH_PUBLIC_URL || '').replace(/\/$/, '');
+        res.json({ token, url: base ? `${base}/clinic?token=${token}` : `/clinic?token=${token}`, expires_in: 3600 });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Clinic-scoped auth: a JWT with scope:'clinic' (cannot touch user/admin routes).
+const authenticateClinic = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.sendStatus(401);
+    jwt.verify(token, JWT_SECRET, (err, payload) => {
+        if (err || !payload || payload.scope !== 'clinic') return res.sendStatus(403);
+        req.clinic = payload; // { session_id, clinic_id, scope }
+        next();
+    });
+};
+
+app.get('/api/clinic/status', authenticateClinic, async (req, res) => {
+    const data = await apiSessions.getStatus(req.clinic.session_id);
+    if (!data) return res.status(404).json({ error: 'Session not found' });
+    res.json(data);
+});
+
+app.get('/api/clinic/qr', authenticateClinic, async (req, res) => {
+    const data = await apiSessions.getQr(req.clinic.session_id);
+    if (!data) return res.status(404).json({ error: 'Session not found' });
+    res.json(data);
+});
+
+app.get('/api/clinic/stats', authenticateClinic, (req, res) => {
+    const sid = req.clinic.session_id;
+    db.get(`
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status IN ('sent','delivered','read') THEN 1 ELSE 0 END) as sent,
+            SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+            SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) as read,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END) as today
+        FROM api_messages WHERE session_id = ?
+    `, [sid], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(row || {});
+    });
+});
+
+app.get('/api/clinic/messages', authenticateClinic, (req, res) => {
+    const sid = req.clinic.session_id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = (page - 1) * limit;
+    db.get('SELECT COUNT(*) as total FROM api_messages WHERE session_id = ?', [sid], (err, c) => {
+        if (err) return res.status(500).json({ error: err.message });
+        db.all(`SELECT id, to_number, body, has_media, status, created_at, updated_at
+                FROM api_messages WHERE session_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
+            [sid, limit, offset], (e2, rows) => {
+                if (e2) return res.status(500).json({ error: e2.message });
+                res.json({ data: rows, pagination: { total: c.total, page, limit, totalPages: Math.ceil(c.total / limit) } });
+            });
+    });
 });
 
 // Fallback route for React Router

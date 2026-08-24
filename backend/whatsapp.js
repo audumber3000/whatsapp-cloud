@@ -155,42 +155,6 @@ const sendMessage = async (userId, phone, message) => {
     }
 };
 
-// Post an image (PNG buffer) to the user's WhatsApp Status / Stories.
-const postImageStatus = async (userId, imageBuffer, caption = '') => {
-    try {
-        const session = clients.get(userId);
-        if (!session || !session.isConnected) {
-            console.error(`[WA] User ${userId} is not connected; cannot post status`);
-            return false;
-        }
-        const media = new MessageMedia('image/png', imageBuffer.toString('base64'), 'festival.png');
-        // status@broadcast is the special chat that publishes to Status/Stories.
-        await session.client.sendMessage('status@broadcast', media, caption ? { caption } : {});
-        console.log(`[WA] Status posted for user ${userId}`);
-        return true;
-    } catch (error) {
-        console.error(`[WA] Error posting status for user ${userId}:`, error.message);
-        return false;
-    }
-};
-
-// Send an image (PNG buffer) as a normal media message to a contact.
-const sendImage = async (userId, phone, imageBuffer, caption = '') => {
-    try {
-        const session = clients.get(userId);
-        if (!session || !session.isConnected) {
-            console.error(`[WA] User ${userId} is not connected; cannot send image`);
-            return false;
-        }
-        const media = new MessageMedia('image/png', imageBuffer.toString('base64'), 'festival.png');
-        await session.client.sendMessage(`${phone}@c.us`, media, caption ? { caption } : {});
-        return true;
-    } catch (error) {
-        console.error(`[WA] Error sending image to ${phone} for user ${userId}:`, error.message);
-        return false;
-    }
-};
-
 // Send a stored file (image / PDF / video / audio) as a WhatsApp message.
 // Images & videos go inline (with caption); everything else (PDF, docs) as a document.
 const sendMedia = async (userId, phone, { filePath, mimetype, filename, caption = '' }) => {
@@ -259,8 +223,6 @@ const notifyUser = (userId, type, message) => {
 module.exports = {
     sendMessage,
     sendMedia,
-    postImageStatus,
-    sendImage,
     disconnectClient,
     setIo,
     getStatus,

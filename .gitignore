@@ -30,3 +30,6 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Standalone Python voice prototype — unrelated to the Node app
+voice-service/
