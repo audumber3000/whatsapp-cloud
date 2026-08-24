@@ -200,6 +200,32 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
             // Reminders can ask for a tappable reply instead of plain text.
             db.run(`ALTER TABLE automations ADD COLUMN ask_confirmation INTEGER DEFAULT 0`, () => {});
 
+            // ── Programmable API ─────────────────────────────────────────
+            // One key per user. Whoever holds it can send through that user's
+            // own WhatsApp to that user's customers.
+            db.run(`ALTER TABLE users ADD COLUMN api_key TEXT`, () => {});
+            db.run(`ALTER TABLE users ADD COLUMN api_key_created_at DATETIME`, () => {});
+            db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)`, () => {});
+
+            // Everything sent through the API, so a user can see what their
+            // integrations did on their behalf.
+            db.run(`CREATE TABLE IF NOT EXISTS api_sends (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                to_number TEXT NOT NULL,
+                body TEXT,
+                has_media INTEGER DEFAULT 0,
+                wa_message_id TEXT,
+                status TEXT DEFAULT 'sent',
+                error_reason TEXT,
+                reference TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_api_sends_user ON api_sends(user_id, created_at DESC)`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_api_sends_waid ON api_sends(wa_message_id)`);
+
             // Health alerting — one row per alert so we don't spam on every tick.
             db.run(`CREATE TABLE IF NOT EXISTS health_alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

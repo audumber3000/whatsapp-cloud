@@ -10,6 +10,7 @@ import { WhatsAppGlyph, Logo } from './components/Brand';
 import InboxView from './components/InboxView';
 import ResponseSummary from './components/ResponseSummary';
 import ActivityFeed from './components/ActivityFeed';
+import ApiKeyPanel from './components/ApiKeyPanel';
 
 import { io } from 'socket.io-client';
 import {
@@ -1341,10 +1342,30 @@ function SettingsView({ token }) {
                 >
                   Notification Log
                 </button>
+                <button
+                  onClick={() => setSidebarOpen(false) || setActiveTab('api')}
+                  style={{
+                    padding: '8px 4px 12px',
+                    border: 'none',
+                    background: 'none',
+                    color: activeTab === 'api' ? 'var(--brand)' : 'var(--text-muted)',
+                    borderBottom: activeTab === 'api' ? '2px solid var(--brand)' : '2px solid transparent',
+                    fontWeight: activeTab === 'api' ? '600' : '500',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  API
+                </button>
              </div>
            </div>
 
-           {activeTab === 'account' ? (
+           {activeTab === 'api' ? (
+             <div style={{ padding: '24px' }}>
+               <ApiKeyPanel apiUrl={API_URL} token={token} />
+             </div>
+           ) : activeTab === 'account' ? (
              <form style={{ padding: '24px' }} onSubmit={handleSave}>
                {msg.text && (
                   <div style={{ padding: '12px', background: msg.type==='success'?'var(--success-bg)':'var(--danger-bg)', color: msg.type==='success'?'var(--success)':'var(--danger)', borderRadius: '8px', marginBottom: '16px' }}>

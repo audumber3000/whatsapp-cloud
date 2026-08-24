@@ -649,6 +649,21 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
 .empty-state p{font-size:13.5px;color:var(--text-muted);margin:0;max-width:38ch}
 .empty-state .btn-primary{margin-top:12px}
 
+/* ==== api key panel ======================================================= */
+.apikey-box{display:flex;align-items:center;gap:11px;padding:12px 14px;background:var(--surface-sunken);
+  border:1px solid var(--border);border-radius:var(--r-md);flex-wrap:wrap}
+.apikey-box code{flex:1;min-width:200px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:13px;word-break:break-all;background:none;padding:0;color:var(--text)}
+
+.code-block{position:relative;background:var(--brand-deep);border-radius:var(--r-md);overflow:hidden}
+:root[data-theme="dark"] .code-block{background:#0A1418;border:1px solid var(--border)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .code-block{background:#0A1418;border:1px solid var(--border)}}
+.code-block pre{margin:0;padding:15px 16px;overflow-x:auto;color:#DCF8C6;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.65}
+.code-copy{position:absolute;top:9px;right:9px;background:rgba(255,255,255,.12);border:0;
+  color:#DCF8C6;border-radius:5px;padding:5px 7px;cursor:pointer;display:flex;align-items:center}
+.code-copy:hover{background:rgba(255,255,255,.22)}
+
 /* ==== responsive ========================================================== */
 /* The app was desktop-only: no media queries at all, a fixed 250px sidebar and
    hard 3-column grids. */

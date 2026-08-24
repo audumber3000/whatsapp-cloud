@@ -214,6 +214,28 @@ const showTyping = async (userId, phone, ms = 1500) => {
         .then(() => true).catch(() => false);
 };
 
+/**
+ * Send media straight from a URL. Evolution fetches it itself, so the bytes
+ * never pass through this process — which also keeps the old SSRF surface from
+ * MessageMedia.fromUrl() out of the API path.
+ */
+const sendMediaByUrl = async (userId, phone, { url, caption = '', filename, mimetype = '' }) => {
+    const instance = hooks.instanceNameForUser(userId);
+    if (!state.get(instance).isConnected) {
+        console.error(`[WA] User ${userId} is not connected to WhatsApp`);
+        return false;
+    }
+    try {
+        const res = await client.sendMedia(instance, phone, {
+            media: url, mimetype, fileName: filename || 'attachment', caption,
+        });
+        return res?.key?.id || true;
+    } catch (error) {
+        console.error(`Error sending media URL for user ${userId}:`, error.message);
+        return false;
+    }
+};
+
 const notifyUser = (userId, type, message) => {
     if (!io) return;
     io.to(`user_${userId}`).emit('notification', {
@@ -266,4 +288,5 @@ module.exports = {
     sendFeedbackPoll,
     validateNumbers,
     showTyping,
+    sendMediaByUrl,
 };

@@ -26,6 +26,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 // receipts here. Authenticated by a shared secret inside the router.
 app.use('/api/evolution/webhook', require('./evolution/webhook').router());
 
+// The programmable API — WA Reach's second product. Authenticated by a
+// per-user API key, entirely separate from the dashboard's JWT session.
+const publicApi = require('./publicApi');
+app.use('/api/v1', publicApi.router());
+
 // --- Media upload storage (images / PDFs / video for scheduled sends) ---
 const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -506,6 +511,32 @@ app.get('/api/feed', authenticateToken, (req, res) => {
     `, [req.user.id, req.user.id, limit], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows || []);
+    });
+});
+
+// --- API key management (dashboard-authenticated) ---
+
+app.get('/api/apikey', authenticateToken, (req, res) => {
+    db.get('SELECT api_key, api_key_created_at FROM users WHERE id = ?', [req.user.id], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ api_key: row?.api_key || null, created_at: row?.api_key_created_at || null });
+    });
+});
+
+// Also used to rotate: issuing a new key immediately invalidates the old one.
+app.post('/api/apikey', authenticateToken, async (req, res) => {
+    try {
+        const key = await publicApi.issueKey(req.user.id);
+        res.json({ api_key: key, created_at: new Date().toISOString() });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/apikey', authenticateToken, (req, res) => {
+    db.run('UPDATE users SET api_key = NULL, api_key_created_at = NULL WHERE id = ?', [req.user.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
     });
 });
 
