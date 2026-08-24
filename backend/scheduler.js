@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const path = require('path');
 const db = require('./db');
-const { sendMessage, sendMedia, notifyUser, getStatus } = require('./whatsapp');
+const { sendMessage, sendMedia, notifyUser, getStatus, sendConfirmation, showTyping } = require('./whatsapp');
 const { sendEmail } = require('./email');
 
 // Promise helpers
@@ -115,25 +115,33 @@ cron.schedule('* * * * *', () => {
         }
 
         for (const row of rows) {
-            const { id, user_id, message, media_id, phone } = row;
-            let success;
-            if (media_id) {
-                const media = await getMediaById(media_id);
-                success = media
-                    ? await sendMedia(user_id, phone, { ...media, caption: message })
-                    : await sendMessage(user_id, phone, message); // attachment gone — send text only
-            } else {
-                success = await sendMessage(user_id, phone, message);
-            }
-            const newStatus = success ? 'sent' : 'failed';
-            db.run(`UPDATE reminders SET status = ? WHERE id = ?`, [newStatus, id]);
+          // One bad row must never kill the process: scheduler.js runs inside
+          // the API server, so an uncaught throw here takes the whole app down.
+          // A missing import did exactly that on 24 Aug.
+          try {
+              const { id, user_id, message, media_id, phone } = row;
+              let success;
+              if (media_id) {
+                  const media = await getMediaById(media_id);
+                  success = media
+                      ? await sendMedia(user_id, phone, { ...media, caption: message })
+                      : await sendMessage(user_id, phone, message); // attachment gone — send text only
+              } else {
+                  success = await sendMessage(user_id, phone, message);
+              }
+              const newStatus = success ? 'sent' : 'failed';
+              db.run(`UPDATE reminders SET status = ? WHERE id = ?`, [newStatus, id]);
+          } catch (rowErr) {
+            console.error(`[scheduler] reminder failed (id ${row && row.id}):`, rowErr && rowErr.stack || rowErr);
+            try { db.run(`UPDATE reminders SET status='failed' WHERE id=?`, [row && row.id]); } catch (_) {}
+          }
         }
     });
 
     // --- advanced automations queue ---
     const currentIsoString = now.toISOString();
     db.all(`
-        SELECT al.id as log_id, al.contact_id, al.automation_id, c.phone, a.user_id, a.message_template, a.status as auto_status, a.active_days, al.sent_time
+        SELECT al.id as log_id, al.contact_id, al.automation_id, c.phone, a.user_id, a.message_template, a.status as auto_status, a.active_days, al.sent_time, a.name as auto_name, COALESCE(a.ask_confirmation, 0) as ask_confirmation
         FROM automation_logs al
         JOIN contacts c ON al.contact_id = c.id
         JOIN automations a ON al.automation_id = a.id
@@ -150,131 +158,139 @@ cron.schedule('* * * * *', () => {
         }
 
         for (const row of rows) {
-            const { log_id, contact_id, automation_id, phone, user_id, message_template, auto_status, active_days, sent_time } = row;
-            let lastMessageId = null;
+          // Same protection as the reminders loop above: an uncaught throw in
+          // here would take the API server down with it.
+          try {
+              const { log_id, contact_id, automation_id, phone, user_id, message_template, auto_status, active_days, sent_time, auto_name, ask_confirmation } = row;
+              let lastMessageId = null;
             
-            let messageBlocks = [];
-            try {
-                // Determine if it is a JSON array of blocks
-                const parsed = JSON.parse(message_template);
-                if (Array.isArray(parsed)) {
-                    messageBlocks = parsed;
-                } else {
-                    messageBlocks = [{ variations: [String(message_template)] }];
-                }
-            } catch (e) {
-                // Fallback to simple string
-                messageBlocks = [{ variations: [String(message_template)] }];
-            }
+              let messageBlocks = [];
+              try {
+                  // Determine if it is a JSON array of blocks
+                  const parsed = JSON.parse(message_template);
+                  if (Array.isArray(parsed)) {
+                      messageBlocks = parsed;
+                  } else {
+                      messageBlocks = [{ variations: [String(message_template)] }];
+                  }
+              } catch (e) {
+                  // Fallback to simple string
+                  messageBlocks = [{ variations: [String(message_template)] }];
+              }
 
-            let overallSuccess = true;
+              let overallSuccess = true;
 
-            // Send each block sequentially with a short delay for multi-message blocks
-            for (let i = 0; i < messageBlocks.length; i++) {
-                const block = messageBlocks[i];
+              // Send each block sequentially with a short delay for multi-message blocks
+              for (let i = 0; i < messageBlocks.length; i++) {
+                  const block = messageBlocks[i];
 
-                // Pick a random caption/message variation (may be empty for media-only blocks)
-                const variations = (block.variations || []).filter(v => typeof v === 'string');
-                const msgText = variations.length ? variations[Math.floor(Math.random() * variations.length)] : '';
+                  // Pick a random caption/message variation (may be empty for media-only blocks)
+                  const variations = (block.variations || []).filter(v => typeof v === 'string');
+                  const msgText = variations.length ? variations[Math.floor(Math.random() * variations.length)] : '';
 
-                let didSend = false;
-                if (block.media_id) {
-                    // Media block: send the attachment with the chosen variation as caption
-                    const media = await getMediaById(block.media_id);
-                    if (media) {
-                        const success = await sendMedia(user_id, phone, { ...media, caption: msgText });
-                        if (typeof success === 'string') lastMessageId = success;
-                        if (!success) overallSuccess = false;
-                        didSend = true;
-                    } else {
-                        overallSuccess = false; // attachment missing
-                    }
-                } else if (msgText.trim()) {
-                    // "typing…" first — cheap, and it serves the same instinct as
-                    // the send jitter and variation rotation: look human.
-                    await showTyping(user_id, phone, 1200).catch(() => {});
+                  let didSend = false;
+                  if (block.media_id) {
+                      // Media block: send the attachment with the chosen variation as caption
+                      const media = await getMediaById(block.media_id);
+                      if (media) {
+                          const success = await sendMedia(user_id, phone, { ...media, caption: msgText });
+                          if (typeof success === 'string') lastMessageId = success;
+                          if (!success) overallSuccess = false;
+                          didSend = true;
+                      } else {
+                          overallSuccess = false; // attachment missing
+                      }
+                  } else if (msgText.trim()) {
+                      // "typing…" first — cheap, and it serves the same instinct as
+                      // the send jitter and variation rotation: look human.
+                      await showTyping(user_id, phone, 1200).catch(() => {});
 
-                    // When the automation asks for confirmation, the LAST text
-                    // block goes out with tappable Confirm / Reschedule / Cancel
-                    // rather than plain text. The button id comes back on the
-                    // reply, so the answer is structured instead of parsed.
-                    const isLast = i === messageBlocks.length - 1;
-                    const success = (ask_confirmation && isLast)
-                        ? await sendConfirmation(user_id, phone, {
-                            title: auto_name || 'Appointment',
-                            body: msgText,
-                            footer: 'Tap an option below',
-                          })
-                        : await sendMessage(user_id, phone, msgText);
-                    if (typeof success === 'string') lastMessageId = success;
-                    if (!success) overallSuccess = false;
-                    didSend = true;
-                }
+                      // When the automation asks for confirmation, the LAST text
+                      // block goes out with tappable Confirm / Reschedule / Cancel
+                      // rather than plain text. The button id comes back on the
+                      // reply, so the answer is structured instead of parsed.
+                      const isLast = i === messageBlocks.length - 1;
+                      const success = (ask_confirmation && isLast)
+                          ? await sendConfirmation(user_id, phone, {
+                              title: auto_name || 'Appointment',
+                              body: msgText,
+                              footer: 'Tap an option below',
+                            })
+                          : await sendMessage(user_id, phone, msgText);
+                      if (typeof success === 'string') lastMessageId = success;
+                      if (!success) overallSuccess = false;
+                      didSend = true;
+                  }
 
-                // Human-like gap between sequential blocks to the same contact
-                if (didSend && i < messageBlocks.length - 1) {
-                    const delayMs = Math.floor(Math.random() * 3000) + 2000;
-                    await sleep(delayMs);
-                }
-            }
+                  // Human-like gap between sequential blocks to the same contact
+                  if (didSend && i < messageBlocks.length - 1) {
+                      const delayMs = Math.floor(Math.random() * 3000) + 2000;
+                      await sleep(delayMs);
+                  }
+              }
 
-            // Update the log status and content
-            const newStatus = overallSuccess ? 'delivered' : 'failed';
-            const logReason = overallSuccess ? null : 'Failed to reach WhatsApp client or failure in dispatch sequence';
-            const sentContent = messageBlocks.map(b => {
-                const firstVar = (b.variations && b.variations[0]) ? b.variations[0] : '';
-                if (b.media_id) return (b.media_name ? `📎 ${b.media_name}` : '📎 [attachment]') + (firstVar ? ` — ${firstVar}` : '');
-                return firstVar;
-            }).filter(Boolean).join('\n'); // Simplified for logging
-            // lastMessageId lets the MESSAGES_UPDATE webhook attach a real ack
-            // to this row later. Until now "delivered" only meant "handed over".
-            db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ?, wa_message_id = ? WHERE id = ?`,
-                [newStatus, logReason, sentContent, (typeof lastMessageId === 'string' ? lastMessageId : null), log_id]);
+              // Update the log status and content
+              const newStatus = overallSuccess ? 'delivered' : 'failed';
+              const logReason = overallSuccess ? null : 'Failed to reach WhatsApp client or failure in dispatch sequence';
+              const sentContent = messageBlocks.map(b => {
+                  const firstVar = (b.variations && b.variations[0]) ? b.variations[0] : '';
+                  if (b.media_id) return (b.media_name ? `📎 ${b.media_name}` : '📎 [attachment]') + (firstVar ? ` — ${firstVar}` : '');
+                  return firstVar;
+              }).filter(Boolean).join('\n'); // Simplified for logging
+              // lastMessageId lets the MESSAGES_UPDATE webhook attach a real ack
+              // to this row later. Until now "delivered" only meant "handed over".
+              db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ?, wa_message_id = ? WHERE id = ?`,
+                  [newStatus, logReason, sentContent, (typeof lastMessageId === 'string' ? lastMessageId : null), log_id]);
 
-            recordSendOutcome(user_id, overallSuccess);
+              recordSendOutcome(user_id, overallSuccess);
 
-            // Reschedule for tomorrow if the automation is still active
-            if (auto_status === 'Active') {
-                db.get(`SELECT start_time, end_time, active_days, timezone_offset FROM automations WHERE id = ?`, [automation_id], (errAuto, autoDetails) => {
-                    if (errAuto || !autoDetails) return;
+              // Reschedule for tomorrow if the automation is still active
+              if (auto_status === 'Active') {
+                  db.get(`SELECT start_time, end_time, active_days, timezone_offset FROM automations WHERE id = ?`, [automation_id], (errAuto, autoDetails) => {
+                      if (errAuto || !autoDetails) return;
 
-                    let daysArray;
-                    try {
-                        daysArray = JSON.parse(autoDetails.active_days) || [0,1,2,3,4,5,6];
-                    } catch(e) {
-                        daysArray = [0,1,2,3,4,5,6];
-                    }
+                      let daysArray;
+                      try {
+                          daysArray = JSON.parse(autoDetails.active_days) || [0,1,2,3,4,5,6];
+                      } catch(e) {
+                          daysArray = [0,1,2,3,4,5,6];
+                      }
 
-                    const offsetMins = autoDetails.timezone_offset || 0;
-                    const [startH, startM] = autoDetails.start_time.split(':').map(Number);
-                    const [endH, endM] = autoDetails.end_time.split(':').map(Number);
+                      const offsetMins = autoDetails.timezone_offset || 0;
+                      const [startH, startM] = autoDetails.start_time.split(':').map(Number);
+                      const [endH, endM] = autoDetails.end_time.split(':').map(Number);
 
-                    // Move to the next day in the user's timezone
-                    const oldDateUTC = new Date(sent_time);
-                    let clientNextDate = new Date(oldDateUTC.getTime() - (offsetMins * 60000));
-                    clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
-                    clientNextDate.setUTCHours(startH, startM, 0, 0);
+                      // Move to the next day in the user's timezone
+                      const oldDateUTC = new Date(sent_time);
+                      let clientNextDate = new Date(oldDateUTC.getTime() - (offsetMins * 60000));
+                      clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
+                      clientNextDate.setUTCHours(startH, startM, 0, 0);
 
-                    while (!daysArray.includes(clientNextDate.getDay())) {
-                        clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
-                    }
+                      while (!daysArray.includes(clientNextDate.getDay())) {
+                          clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
+                      }
 
-                    // Calculate jitter within the window
-                    let startTotalMins = startH * 60 + startM;
-                    let endTotalMins = endH * 60 + endM;
-                    if (endTotalMins <= startTotalMins) endTotalMins += 24 * 60;
-                    const windowSizeMins = endTotalMins - startTotalMins;
+                      // Calculate jitter within the window
+                      let startTotalMins = startH * 60 + startM;
+                      let endTotalMins = endH * 60 + endM;
+                      if (endTotalMins <= startTotalMins) endTotalMins += 24 * 60;
+                      const windowSizeMins = endTotalMins - startTotalMins;
                     
-                    const randomOffsetMins = Math.random() * windowSizeMins;
-                    const nextScheduleClient = new Date(clientNextDate.getTime() + (randomOffsetMins * 60 * 1000));
-                    const nextScheduleUTC = new Date(nextScheduleClient.getTime() + (offsetMins * 60000));
+                      const randomOffsetMins = Math.random() * windowSizeMins;
+                      const nextScheduleClient = new Date(clientNextDate.getTime() + (randomOffsetMins * 60 * 1000));
+                      const nextScheduleUTC = new Date(nextScheduleClient.getTime() + (offsetMins * 60000));
 
-                    db.run(
-                        `INSERT INTO automation_logs (automation_id, contact_id, status, sent_time) VALUES (?, ?, 'pending', ?)`, 
-                        [automation_id, contact_id, nextScheduleUTC.toISOString()]
-                    );
-                });
-            }
+                      db.run(
+                          `INSERT INTO automation_logs (automation_id, contact_id, status, sent_time) VALUES (?, ?, 'pending', ?)`, 
+                          [automation_id, contact_id, nextScheduleUTC.toISOString()]
+                      );
+                  });
+              }
+          } catch (rowErr) {
+            console.error(`[scheduler] automation row failed (log ${row && row.log_id}):`, rowErr && rowErr.stack || rowErr);
+            try { db.run(`UPDATE automation_logs SET status='failed', error_reason=? WHERE id=?`,
+              [String(rowErr && rowErr.message || rowErr).slice(0,200), row && row.log_id]); } catch (_) {}
+          }
         }
     });
 
