@@ -183,14 +183,30 @@ cron.schedule('* * * * *', () => {
                     const media = await getMediaById(block.media_id);
                     if (media) {
                         const success = await sendMedia(user_id, phone, { ...media, caption: msgText });
+                        if (typeof success === 'string') lastMessageId = success;
                         if (!success) overallSuccess = false;
                         didSend = true;
                     } else {
                         overallSuccess = false; // attachment missing
                     }
                 } else if (msgText.trim()) {
-                    // Text block
-                    const success = await sendMessage(user_id, phone, msgText);
+                    // "typing…" first — cheap, and it serves the same instinct as
+                    // the send jitter and variation rotation: look human.
+                    await showTyping(user_id, phone, 1200).catch(() => {});
+
+                    // When the automation asks for confirmation, the LAST text
+                    // block goes out with tappable Confirm / Reschedule / Cancel
+                    // rather than plain text. The button id comes back on the
+                    // reply, so the answer is structured instead of parsed.
+                    const isLast = i === messageBlocks.length - 1;
+                    const success = (ask_confirmation && isLast)
+                        ? await sendConfirmation(user_id, phone, {
+                            title: auto_name || 'Appointment',
+                            body: msgText,
+                            footer: 'Tap an option below',
+                          })
+                        : await sendMessage(user_id, phone, msgText);
+                    if (typeof success === 'string') lastMessageId = success;
                     if (!success) overallSuccess = false;
                     didSend = true;
                 }

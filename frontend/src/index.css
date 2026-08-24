@@ -572,6 +572,16 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
   .inbox-preview{max-width:60vw}
 }
 
+/* ==== toggle row ========================================================== */
+.toggle-row{display:flex;gap:11px;align-items:flex-start;cursor:pointer;
+  padding:12px 14px;border:1px solid var(--border);border-radius:var(--r-md);
+  background:var(--surface-sunken);transition:border-color .15s,background .15s}
+.toggle-row:hover{border-color:var(--brand);background:var(--brand-ghost)}
+.toggle-row input{width:17px;height:17px;margin-top:2px;flex:none;accent-color:var(--brand);cursor:pointer}
+.toggle-row span{display:flex;flex-direction:column;gap:2px}
+.toggle-row strong{font-size:14px;font-weight:600;color:var(--text)}
+.toggle-row em{font-style:normal;font-size:12.5px;color:var(--text-muted);line-height:1.45}
+
 /* ==== responsive ========================================================== */
 /* The app was desktop-only: no media queries at all, a fixed 250px sidebar and
    hard 3-column grids. */

@@ -197,6 +197,9 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
             db.run(`ALTER TABLE automation_logs ADD COLUMN responded_at DATETIME`, () => {});
             db.run(`CREATE INDEX IF NOT EXISTS idx_autolog_waid ON automation_logs(wa_message_id)`);
 
+            // Reminders can ask for a tappable reply instead of plain text.
+            db.run(`ALTER TABLE automations ADD COLUMN ask_confirmation INTEGER DEFAULT 0`, () => {});
+
             // Health alerting — one row per alert so we don't spam on every tick.
             db.run(`CREATE TABLE IF NOT EXISTS health_alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

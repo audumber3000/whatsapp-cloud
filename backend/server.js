@@ -569,7 +569,14 @@ app.get('/api/automations', authenticateToken, (req, res) => {
 });
 
 app.post('/api/automations', authenticateToken, (req, res) => {
-    const { name, start_time, end_time, message_template, contacts, clientOffset, active_days } = req.body;
+    const { name, start_time, end_time, message_template, contacts, clientOffset, active_days, ask_confirmation } = req.body;
+    // Accept an array or a comma-separated string. Previously a plain string
+    // here reached .forEach on a non-array and killed the whole process — and
+    // with PM2 pinned to a single instance that is a full outage per bad request.
+    const contactList = Array.isArray(contacts)
+        ? contacts.map((c) => String(c).replace(/\D/g, '')).filter(Boolean)
+        : String(contacts || '').split(',').map((c) => c.replace(/\D/g, '')).filter(Boolean);
+
     const userId = req.user.id;
 
     // Default to server offset if not provided (for older clients)
@@ -584,8 +591,8 @@ app.post('/api/automations', authenticateToken, (req, res) => {
         msgTemplateStr = JSON.stringify(msgTemplateStr);
     }
 
-    db.run(`INSERT INTO automations (user_id, name, start_time, end_time, message_template, status, active_days, timezone_offset) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?)`,
-        [userId, name, start_time, end_time, msgTemplateStr, daysJson, offsetMins],
+    db.run(`INSERT INTO automations (user_id, name, start_time, end_time, message_template, status, active_days, timezone_offset, ask_confirmation) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?)`,
+        [userId, name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, ask_confirmation ? 1 : 0],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
 
@@ -601,7 +608,7 @@ app.post('/api/automations', authenticateToken, (req, res) => {
                 endTotalMins += 24 * 60; 
             }
 
-            const contactCount = contacts.length;
+            const contactCount = contactList.length;
             const nowUTC = new Date();
             let clientNow = new Date(nowUTC.getTime() - (offsetMins * 60000));
             const clientCurrentTotalMins = clientNow.getUTCHours() * 60 + clientNow.getUTCMinutes();
@@ -638,7 +645,7 @@ app.post('/api/automations', authenticateToken, (req, res) => {
 
             let currentTimeOffset = 0;
             
-            contacts.forEach((contactPhone) => {
+            contactList.forEach((contactPhone) => {
                 const jitterMs = (Math.random() * 0.6 - 0.3) * actualBaseInterval * 60 * 1000;
                 currentTimeOffset += actualBaseInterval;
                 const scheduledTime = new Date(absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
@@ -698,7 +705,14 @@ app.get('/api/automations/:id', authenticateToken, (req, res) => {
 
 app.put('/api/automations/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-    const { name, start_time, end_time, message_template, contacts, clientOffset, active_days } = req.body;
+    const { name, start_time, end_time, message_template, contacts, clientOffset, active_days, ask_confirmation } = req.body;
+    // Accept an array or a comma-separated string. Previously a plain string
+    // here reached .forEach on a non-array and killed the whole process — and
+    // with PM2 pinned to a single instance that is a full outage per bad request.
+    const contactList = Array.isArray(contacts)
+        ? contacts.map((c) => String(c).replace(/\D/g, '')).filter(Boolean)
+        : String(contacts || '').split(',').map((c) => c.replace(/\D/g, '')).filter(Boolean);
+
     const userId = req.user.id;
 
     // First ensure ownership
@@ -714,8 +728,8 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
             msgTemplateStr = JSON.stringify(msgTemplateStr);
         }
 
-        db.run(`UPDATE automations SET name = ?, start_time = ?, end_time = ?, message_template = ?, active_days = ?, timezone_offset = ? WHERE id = ? AND user_id = ?`,
-            [name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, id, userId],
+        db.run(`UPDATE automations SET name = ?, start_time = ?, end_time = ?, message_template = ?, active_days = ?, timezone_offset = ?, ask_confirmation = ? WHERE id = ? AND user_id = ?`,
+            [name, start_time, end_time, msgTemplateStr, daysJson, offsetMins, ask_confirmation ? 1 : 0, id, userId],
             function (err) {
                 if (err) return res.status(500).json({ error: err.message });
 
@@ -732,7 +746,7 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
                         endTotalMins += 24 * 60; 
                     }
 
-                    const contactCount = contacts.length;
+                    const contactCount = contactList.length;
                     if (contactCount === 0) {
                         return res.status(200).json({ message: 'Automation updated, no pending contacts found', id });
                     }
@@ -773,7 +787,7 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
 
                     let currentTimeOffset = 0;
 
-                    contacts.forEach((contactPhone) => {
+                    contactList.forEach((contactPhone) => {
                         const jitterMs = (Math.random() * 0.6 - 0.3) * actualBaseInterval * 60 * 1000;
                         currentTimeOffset += actualBaseInterval;
                         const scheduledTime = new Date(absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);

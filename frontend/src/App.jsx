@@ -670,7 +670,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked }) {
 function AutomationsView({ token }) {
   const [automations, setAutomations] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset() });
+  const [formData, setFormData] = useState({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset(), ask_confirmation: false });
   const [editAutomationId, setEditAutomationId] = useState(null);
 
   const fetchAutomations = () => {
@@ -701,6 +701,7 @@ function AutomationsView({ token }) {
           message_template: Array.isArray(blocks) ? blocks : [{ variations: [''] }],
           contacts: data.contacts ? data.contacts.join(', ') : '',
           active_days: data.active_days ? JSON.parse(data.active_days) : [1,2,3,4,5],
+          ask_confirmation: !!data.ask_confirmation,
           timezone_offset: data.timezone_offset !== undefined ? data.timezone_offset : new Date().getTimezoneOffset()
         });
         setEditAutomationId(id);
@@ -749,7 +750,7 @@ function AutomationsView({ token }) {
   const closeModal = () => {
     setShowModal(false);
     setEditAutomationId(null);
-    setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset() });
+    setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset(), ask_confirmation: false });
   };
 
   const handleAddBlock = () => {
@@ -850,7 +851,7 @@ function AutomationsView({ token }) {
             <h3>All Workflows</h3>
             <p className="card-desc">Manage your intelligent message flows and triggers.</p>
           </div>
-          <button className="btn-primary" onClick={() => { setEditAutomationId(null); setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [{ variations: [''] }], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset() }); setShowModal(true); }}>
+          <button className="btn-primary" onClick={() => { setEditAutomationId(null); setFormData({ name: '', start_time: '09:00', end_time: '17:00', message_template: [{ variations: [''] }], contacts: '', active_days: [1,2,3,4,5], timezone_offset: new Date().getTimezoneOffset(), ask_confirmation: false }); setShowModal(true); }}>
             <Plus size={16} /> New Automation
           </button>
         </div>
@@ -972,6 +973,21 @@ function AutomationsView({ token }) {
                   ))}
                 </div>
               </div>
+              <div className="form-group">
+                <label>Reply options</label>
+                <label className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.ask_confirmation}
+                    onChange={(e) => setFormData({ ...formData, ask_confirmation: e.target.checked })}
+                  />
+                  <span>
+                    <strong>Ask for confirmation</strong>
+                    <em>Sends the last message with tappable Confirm / Reschedule / Cancel buttons. Replies show up in your Inbox and against the contact.</em>
+                  </span>
+                </label>
+              </div>
+
 
               <div className="form-group" style={{ margin: 0 }}>
                 <label>Contacts (Comma separated numeric strings)</label>
@@ -1146,12 +1162,13 @@ function LogsView({ token }) {
                 <th>Contact</th>
                 <th>Workflow</th>
                 <th>Status</th>
+                <th>Reply</th>
                 <th>Target Time</th>
               </tr>
             </thead>
             <tbody>
               {currentData.length === 0 && !loading ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No logs found.</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No logs found.</td></tr>
               ) : null}
               {currentData.map((log, idx) => {
                 const isExpanded = expandedLogs.includes(log.id);
@@ -1173,12 +1190,28 @@ function LogsView({ token }) {
                         </span>
                         {log.error_reason && <span style={{ display: 'block', fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>{log.error_reason}</span>}
                       </td>
+                      <td>
+                        {log.response ? (
+                          <span className={`badge badge-${log.response === 'confirm' ? 'delivered' : log.response === 'cancel' ? 'failed' : 'pending'}`}>
+                            {log.response === 'confirm' ? 'Confirmed'
+                              : log.response === 'reschedule' ? 'Reschedule'
+                              : log.response === 'cancel' ? 'Cancelled' : log.response}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>—</span>
+                        )}
+                        {log.delivery_status && (
+                          <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-faint)', marginTop: 3, textTransform: 'capitalize' }}>
+                            {log.delivery_status}
+                          </span>
+                        )}
+                      </td>
                       <td className="log-time">{new Date(log.sent_time).toLocaleString()}</td>
                     </tr>
                     {isExpanded && log.content && (
                       <tr className="expanded-row">
                         <td></td>
-                        <td colSpan={4} style={{ padding: '0 16px 16px' }}>
+                        <td colSpan={5} style={{ padding: '0 16px 16px' }}>
                           <div style={{ background: 'var(--surface-raised)', padding: '12px', borderRadius: '8px', fontSize: '13px', color: 'var(--text)', borderLeft: '4px solid var(--brand)', whiteSpace: 'pre-wrap' }}>
                              {log.content}
                           </div>
