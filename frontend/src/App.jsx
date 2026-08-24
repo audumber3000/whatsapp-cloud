@@ -310,9 +310,7 @@ function MainApp() {
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                  <div style={{ background: 'var(--brand-bubble)', padding: '16px', borderRadius: '50%', color: 'var(--brand-deep)' }}>
-                    <WhatsAppGlyph size={34} />
-                  </div>
+                  <WhatsAppGlyph size={62} rounded />
                 </div>
                 <h2>Connect WhatsApp</h2>
                 <p>Scan the QR code below using your WhatsApp mobile app to link WA Reach.</p>
@@ -327,7 +325,9 @@ function MainApp() {
                   )}
                 </div>
 
-                <div className="scan-status pending">Waiting for scan...</div>
+                <div className={`scan-status ${qrCodeData ? 'pending' : ''}`}>
+                  {qrCodeData ? 'Waiting for scan...' : 'Generating code...'}
+                </div>
               </div>
             </div>
           ) : (
