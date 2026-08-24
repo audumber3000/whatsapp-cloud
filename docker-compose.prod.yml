@@ -28,7 +28,11 @@ services:
       - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET}
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      # A bcrypt hash, not a password. Until now the app read neither of these
+      # and used hardcoded credentials from source instead.
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-12h}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       - WAREACH_PUBLIC_URL=${WAREACH_PUBLIC_URL}
       - MOLARPLUS_URL=${MOLARPLUS_URL}
       - WAREACH_WEBHOOK_SECRET=${WAREACH_WEBHOOK_SECRET}

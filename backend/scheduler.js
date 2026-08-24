@@ -10,9 +10,14 @@ const runP = (sql, params = []) => new Promise((res, rej) => db.run(sql, params,
 
 // Look up a stored media attachment by id -> info needed to send it.
 const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
-function getMediaById(id) {
+/**
+ * Scoped to the owner on purpose. Without the user_id filter, a reminder or
+ * automation could reference another tenant's attachment id and the scheduler
+ * would happily read that file and send it out over WhatsApp.
+ */
+function getMediaById(id, userId) {
     return new Promise((resolve) => {
-        db.get('SELECT * FROM media_attachments WHERE id = ?', [id], (e, row) => {
+        db.get('SELECT * FROM media_attachments WHERE id = ? AND user_id = ?', [id, userId], (e, row) => {
             if (e || !row) return resolve(null);
             resolve({ filePath: path.join(MEDIA_DIR, row.stored_name), mimetype: row.mimetype, filename: row.original_name });
         });
@@ -122,7 +127,7 @@ cron.schedule('* * * * *', () => {
               const { id, user_id, message, media_id, phone } = row;
               let success;
               if (media_id) {
-                  const media = await getMediaById(media_id);
+                  const media = await getMediaById(media_id, user_id);
                   success = media
                       ? await sendMedia(user_id, phone, { ...media, caption: message })
                       : await sendMessage(user_id, phone, message); // attachment gone — send text only
@@ -191,7 +196,7 @@ cron.schedule('* * * * *', () => {
                   let didSend = false;
                   if (block.media_id) {
                       // Media block: send the attachment with the chosen variation as caption
-                      const media = await getMediaById(block.media_id);
+                      const media = await getMediaById(block.media_id, user_id);
                       if (media) {
                           const success = await sendMedia(user_id, phone, { ...media, caption: msgText });
                           if (typeof success === 'string') lastMessageId = success;

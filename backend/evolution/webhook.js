@@ -18,7 +18,7 @@ const client = require('./client');
 const USER_PREFIX = 'wareach_user_';
 const API_PREFIX = 'wareach_api_';
 
-const WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET || '';
+const WEBHOOK_SECRET = require('../config').evolution.webhookSecret;
 
 /** Handlers registered by the two stacks for message-status events. */
 const messageStatusHandlers = { user: null, api: null };
@@ -120,10 +120,11 @@ function router() {
         // Evolution is on the internal network, but the shared secret means a
         // stray request from anywhere else is still rejected. The old code
         // verified no inbound webhooks at all.
-        if (WEBHOOK_SECRET) {
-            const provided = req.get('x-webhook-secret') || '';
-            if (provided !== WEBHOOK_SECRET) return res.sendStatus(401);
-        }
+        // Unconditional. This used to be `if (WEBHOOK_SECRET) {...}`, so an unset
+        // or empty secret skipped the check entirely and left the webhook open.
+        // config.js now refuses to boot in production without one.
+        const provided = req.get('x-webhook-secret') || '';
+        if (!WEBHOOK_SECRET || provided !== WEBHOOK_SECRET) return res.sendStatus(401);
 
         // Always 200 quickly — Evolution retries on failure and we don't want
         // a slow handler to stall its queue.

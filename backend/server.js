@@ -10,10 +10,10 @@ const jwt = require('jsonwebtoken');
 const db = require('./db');
 // We will import whatsapp and scheduler later
 const whatsappClient = require('./whatsapp');
-const apiSessions = require('./apiSessions');
 require('./scheduler');
 
-const JWT_SECRET = 'super-secret-wa-reach-key-123'; // In prod, use environment variable
+const config = require('./config');
+const JWT_SECRET = config.jwtSecret;
 
 const app = express();
 app.use(cors());
@@ -34,6 +34,9 @@ app.use('/api/v1', publicApi.router());
 // --- Media upload storage (images / PDFs / video for scheduled sends) ---
 const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
+// SVG is excluded deliberately: it satisfies ^image/ but is an executable
+// document, and serving one inline from our own origin is stored XSS.
+const BLOCKED_MEDIA = /^image\/svg/i;
 const ALLOWED_MEDIA = /^(image\/|video\/|audio\/|application\/pdf$)/;
 const mediaUpload = multer({
     storage: multer.diskStorage({
@@ -41,10 +44,55 @@ const mediaUpload = multer({
         filename: (req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname || '')),
     }),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-    fileFilter: (req, file, cb) => cb(null, ALLOWED_MEDIA.test(file.mimetype)),
+    fileFilter: (req, file, cb) => cb(null, ALLOWED_MEDIA.test(file.mimetype) && !BLOCKED_MEDIA.test(file.mimetype)),
 });
 
 // --- Auth Middleware ---
+/**
+ * Login throttling.
+ *
+ * /api/login, /api/signup and /api/admin/login previously had no rate limit,
+ * no lockout and no captcha — an admin password could be brute-forced at
+ * whatever rate the network allowed.
+ *
+ * Keyed on IP + submitted username so one attacker cannot lock out a real user
+ * by hammering their account from elsewhere. In-memory, which is fine for a
+ * single instance (PM2 is pinned to one) and resets on restart.
+ */
+const AUTH_MAX_ATTEMPTS = 8;
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+const authAttempts = new Map();
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of authAttempts) if (now > v.reset) authAttempts.delete(k);
+}, 5 * 60 * 1000).unref();
+
+const throttleAuth = (req, res, next) => {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const who = String((req.body && req.body.username) || '').toLowerCase().slice(0, 64);
+    const key = `${ip}|${who}`;
+    const now = Date.now();
+
+    const rec = authAttempts.get(key) || { count: 0, reset: now + AUTH_WINDOW_MS };
+    if (now > rec.reset) { rec.count = 0; rec.reset = now + AUTH_WINDOW_MS; }
+
+    if (rec.count >= AUTH_MAX_ATTEMPTS) {
+        const retry = Math.ceil((rec.reset - now) / 1000);
+        res.set('Retry-After', String(retry));
+        return res.status(429).json({ error: 'Too many attempts. Try again later.', retry_after_seconds: retry });
+    }
+
+    // Counted on the way in and cleared by clearAuthAttempts() on success, so
+    // successful logins never accumulate toward a lockout.
+    rec.count += 1;
+    authAttempts.set(key, rec);
+    req._authThrottleKey = key;
+    next();
+};
+
+const clearAuthAttempts = (req) => { if (req._authThrottleKey) authAttempts.delete(req._authThrottleKey); };
+
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -61,7 +109,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 // --- Auth Endpoints ---
-app.post('/api/signup', async (req, res) => {
+app.post('/api/signup', throttleAuth, async (req, res) => {
     try {
         const { username, password } = req.body;
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -78,20 +126,23 @@ app.post('/api/signup', async (req, res) => {
     }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', throttleAuth, (req, res) => {
     const { username, password } = req.body;
 
     db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (!user) return res.status(400).json({ error: 'Cannot find user' });
+        // Same response as a wrong password: different status/body here
+        // let anyone test whether a username exists.
+        if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
         try {
             if (await bcrypt.compare(password, user.password)) {
                 whatsappClient.initializeUserClient(user.id);
-                const accessToken = jwt.sign({ username: user.username, id: user.id }, JWT_SECRET);
+                clearAuthAttempts(req);
+                const accessToken = jwt.sign({ username: user.username, id: user.id }, JWT_SECRET, { expiresIn: config.jwtExpiresIn });
                 res.json({ accessToken });
             } else {
-                res.status(401).json({ error: 'Not Allowed' });
+                res.status(401).json({ error: 'Invalid credentials' });
             }
         } catch (error) {
             res.status(500).json({ error: error.message });
@@ -100,14 +151,30 @@ app.post('/api/login', (req, res) => {
 });
 
 // --- Master Admin Endpoints ---
-app.post('/api/admin/login', (req, res) => {
-    const { username, password } = req.body;
-    if (username === 'Audumber' && password === 'Audumber') {
-        const adminToken = jwt.sign({ username: 'Audumber', role: 'admin' }, JWT_SECRET);
-        res.json({ accessToken: adminToken });
-    } else {
-        res.status(401).json({ error: 'Invalid admin credentials' });
+app.post('/api/admin/login', throttleAuth, async (req, res) => {
+    const { username, password } = req.body || {};
+    const A = config.admin;
+
+    // Previously this compared against the literals 'Audumber'/'Audumber' in
+    // source. Credentials now come from the environment, and the password is
+    // compared against a bcrypt hash so no plaintext exists anywhere.
+    if (!A.username || (!A.passwordHash && !A.devPassword)) {
+        return res.status(503).json({ error: 'Admin access is not configured' });
     }
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+
+    const userOk = username === A.username;
+    const passOk = A.passwordHash
+        ? await bcrypt.compare(password, A.passwordHash).catch(() => false)
+        : password === A.devPassword;
+
+    if (!userOk || !passOk) {
+        // Deliberately identical to any other failure — no enumeration.
+        return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    clearAuthAttempts(req);
+    const adminToken = jwt.sign({ username: A.username, role: 'admin' }, JWT_SECRET, { expiresIn: '4h' });
+    res.json({ accessToken: adminToken });
 });
 
 const authenticateMasterAdmin = (req, res, next) => {
@@ -202,6 +269,10 @@ app.get('/api/media/:id', authenticateToken, (req, res) => {
         const filePath = path.join(MEDIA_DIR, row.stored_name);
         if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing' });
         res.set('Content-Type', row.mimetype || 'application/octet-stream');
+        // Never let a browser second-guess the type we stored, and never render
+        // an upload as a document in our own origin.
+        res.set('X-Content-Type-Options', 'nosniff');
+        res.set('Content-Security-Policy', "default-src 'none'; sandbox");
         res.sendFile(filePath);
     });
 });
@@ -332,11 +403,23 @@ app.post('/api/reminders', authenticateToken, (req, res) => {
     db.get('SELECT id FROM contacts WHERE id = ? AND user_id = ?', [contact_id, req.user.id], (errC, row) => {
         if (errC || !row) return res.status(400).json({ error: 'Invalid contact' });
 
-        db.run(`INSERT INTO reminders (user_id, contact_id, message, scheduled_time, status, media_id) VALUES (?, ?, ?, ?, 'pending', ?)`,
-            [req.user.id, contact_id, message, scheduled_time, media_id || null],
-            function (err) {
-                if (err) return res.status(500).json({ error: err.message });
-                res.json({ id: this.lastID, contact_id, message, scheduled_time, status: 'pending', media_id: media_id || null });
+        const insert = () => {
+            db.run(`INSERT INTO reminders (user_id, contact_id, message, scheduled_time, status, media_id) VALUES (?, ?, ?, ?, 'pending', ?)`,
+                [req.user.id, contact_id, message, scheduled_time, media_id || null],
+                function (err) {
+                    if (err) return res.status(500).json({ error: 'Could not create reminder' });
+                    res.json({ id: this.lastID, contact_id, message, scheduled_time, status: 'pending', media_id: media_id || null });
+                });
+        };
+
+        // media_id comes from the client and used to be inserted unchecked,
+        // letting a reminder point at another tenant's attachment — which the
+        // scheduler would then read and send out over WhatsApp.
+        if (!media_id) return insert();
+        db.get('SELECT id FROM media_attachments WHERE id = ? AND user_id = ?',
+            [media_id, req.user.id], (eM, mRow) => {
+                if (eM || !mRow) return res.status(400).json({ error: 'Unknown attachment' });
+                insert();
             });
     });
 });
@@ -965,154 +1048,20 @@ app.patch('/api/automations/:id/toggle', authenticateToken, (req, res) => {
 //  Registered before the SPA catch-all so /api/* is never shadowed.
 // ============================================================
 
-// Create / restart a session for a clinic
-app.post('/api/sessions', async (req, res) => {
-    const clinicId = req.body && req.body.clinic_id;
-    if (clinicId === undefined || clinicId === null) {
-        return res.status(400).json({ error: 'clinic_id is required' });
-    }
-    try {
-        const result = await apiSessions.createOrRestartSession(clinicId);
-        res.status(200).json(result);
-    } catch (e) {
-        console.error('[API] create session error:', e.message);
-        res.status(500).json({ error: e.message });
-    }
-});
+// ── MolarPlus session API — REMOVED ──────────────────────────────────────────
+// Six /api/sessions routes and four /api/clinic routes lived here. Four of them
+// had no authentication at all, and POST /api/sessions returned the *existing*
+// api_key for a guessable sequential clinic_id — anyone could enumerate ids,
+// harvest every tenant's key, send WhatsApp messages from their real number,
+// read their history, and unpair their phone.
+//
+// It is deleted rather than patched because the per-user API key in
+// publicApi.js supersedes it: a user IS the account, so a parallel session
+// identity has nothing left to do. api_sessions and api_messages were both
+// empty — the stack was never used in production.
+//
+// Anything that needs programmatic sending now uses /api/v1 with a user key.
 
-// Fresh QR while pairing
-app.get('/api/sessions/:id/qr', async (req, res) => {
-    try {
-        const data = await apiSessions.getQr(req.params.id);
-        if (!data) return res.status(404).json({ error: 'Session not found' });
-        res.json(data);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Status + phone number
-app.get('/api/sessions/:id/status', async (req, res) => {
-    try {
-        const data = await apiSessions.getStatus(req.params.id);
-        if (!data) return res.status(404).json({ error: 'Session not found' });
-        res.json(data);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Send a message (auth: Authorization: Bearer <api_key>)
-app.post('/api/sessions/:id/send', async (req, res) => {
-    const sessionId = req.params.id;
-    const authHeader = req.headers['authorization'] || '';
-    const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
-
-    try {
-        const ok = await apiSessions.authorize(sessionId, apiKey);
-        if (!ok) return res.status(401).json({ error: 'Invalid API key for this session' });
-
-        const { to, text, media_url, log_id } = req.body || {};
-        if (!to || (!text && !media_url)) {
-            return res.status(400).json({ error: '"to" and one of "text"/"media_url" are required' });
-        }
-
-        const messageId = await apiSessions.sendMessage(sessionId, { to, text, media_url, log_id });
-        res.status(200).json({ success: true, message_id: messageId });
-    } catch (e) {
-        if (e.code === 'NOT_CONNECTED') return res.status(409).json({ error: 'Session is not connected' });
-        if (e.code === 'BAD_REQUEST') return res.status(400).json({ error: e.message });
-        console.error('[API] send error:', e.message);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Logout & cleanup
-app.delete('/api/sessions/:id', async (req, res) => {
-    try {
-        await apiSessions.removeSession(req.params.id);
-        res.json({ success: true });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// --- Read-only clinic dashboard (SSO from MolarPlus) ---
-
-// Mint a short-lived dashboard token (auth: Bearer api_key). MolarPlus opens
-// `${WAREACH_PUBLIC_URL or this host}/clinic?token=<token>` for the clinic.
-app.post('/api/sessions/:id/dashboard-token', async (req, res) => {
-    const sessionId = req.params.id;
-    const authHeader = req.headers['authorization'] || '';
-    const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
-    try {
-        const ok = await apiSessions.authorize(sessionId, apiKey);
-        if (!ok) return res.status(401).json({ error: 'Invalid API key for this session' });
-        const clinicId = await apiSessions.getClinicId(sessionId);
-        const token = jwt.sign({ session_id: sessionId, clinic_id: clinicId, scope: 'clinic' }, JWT_SECRET, { expiresIn: '1h' });
-        const base = (process.env.WAREACH_PUBLIC_URL || '').replace(/\/$/, '');
-        res.json({ token, url: base ? `${base}/clinic?token=${token}` : `/clinic?token=${token}`, expires_in: 3600 });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Clinic-scoped auth: a JWT with scope:'clinic' (cannot touch user/admin routes).
-const authenticateClinic = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token) return res.sendStatus(401);
-    jwt.verify(token, JWT_SECRET, (err, payload) => {
-        if (err || !payload || payload.scope !== 'clinic') return res.sendStatus(403);
-        req.clinic = payload; // { session_id, clinic_id, scope }
-        next();
-    });
-};
-
-app.get('/api/clinic/status', authenticateClinic, async (req, res) => {
-    const data = await apiSessions.getStatus(req.clinic.session_id);
-    if (!data) return res.status(404).json({ error: 'Session not found' });
-    res.json(data);
-});
-
-app.get('/api/clinic/qr', authenticateClinic, async (req, res) => {
-    const data = await apiSessions.getQr(req.clinic.session_id);
-    if (!data) return res.status(404).json({ error: 'Session not found' });
-    res.json(data);
-});
-
-app.get('/api/clinic/stats', authenticateClinic, (req, res) => {
-    const sid = req.clinic.session_id;
-    db.get(`
-        SELECT
-            COUNT(*) as total,
-            SUM(CASE WHEN status IN ('sent','delivered','read') THEN 1 ELSE 0 END) as sent,
-            SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
-            SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) as read,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-            SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END) as today
-        FROM api_messages WHERE session_id = ?
-    `, [sid], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(row || {});
-    });
-});
-
-app.get('/api/clinic/messages', authenticateClinic, (req, res) => {
-    const sid = req.clinic.session_id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-    const offset = (page - 1) * limit;
-    db.get('SELECT COUNT(*) as total FROM api_messages WHERE session_id = ?', [sid], (err, c) => {
-        if (err) return res.status(500).json({ error: err.message });
-        db.all(`SELECT id, to_number, body, has_media, status, created_at, updated_at
-                FROM api_messages WHERE session_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
-            [sid, limit, offset], (e2, rows) => {
-                if (e2) return res.status(500).json({ error: e2.message });
-                res.json({ data: rows, pagination: { total: c.total, page, limit, totalPages: Math.ceil(c.total / limit) } });
-            });
-    });
-});
 
 // Fallback route for React Router
 app.use((req, res, next) => {
@@ -1176,6 +1125,5 @@ server.listen(PORT, () => {
     db.all('SELECT id FROM users', [], async (err, rows) => {
         const userIds = (!err && rows) ? rows.map(r => r.id) : [];
         await whatsappClient.bootAll(userIds).catch(e => console.error('[WA] bootAll error:', e.message));
-        apiSessions.bootAll().catch(e => console.error('[API] bootAll error:', e.message));
     });
 });
