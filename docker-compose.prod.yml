@@ -1,0 +1,123 @@
+# WA Reach production stack — single Hetzner box.
+#
+# Only the app is reachable from outside. Evolution, Postgres and Redis talk
+# over the internal compose network and publish no host ports.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+services:
+
+  # ── WA Reach app ────────────────────────────────────────────────────────────
+  wareach:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend/data:/app/backend/data          # SQLite lives here
+      - ./backend/uploads:/app/backend/uploads    # media attachments
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Evolution is reached by service name on the internal network.
+      - EVOLUTION_URL=http://evolution:8080
+      - EVOLUTION_API_KEY=${AUTHENTICATION_API_KEY}
+      # Where Evolution POSTs its callbacks. Also an internal address, so the
+      # webhook never leaves the box.
+      - EVOLUTION_WEBHOOK_URL=http://wareach:3000/api/evolution/webhook
+      - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET}
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - WAREACH_PUBLIC_URL=${WAREACH_PUBLIC_URL}
+      - MOLARPLUS_URL=${MOLARPLUS_URL}
+      - WAREACH_WEBHOOK_SECRET=${WAREACH_WEBHOOK_SECRET}
+      - EMAIL_HOST=${EMAIL_HOST}
+      - EMAIL_PORT=${EMAIL_PORT}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASS=${EMAIL_PASS}
+      - EMAIL_FROM=${EMAIL_FROM}
+    depends_on:
+      evolution:
+        condition: service_healthy
+
+  # ── Evolution API (WhatsApp transport) ──────────────────────────────────────
+  evolution:
+    # Pinned. v2.1.1 (the version in Evolution's own docs) ships a Baileys
+    # too old to pair with WhatsApp as of Aug 2026 — it never issues a QR.
+    # 2.3.7 was verified locally to generate one. Do not track :latest.
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: unless-stopped
+    # No ports published — internal only.
+    volumes:
+      - evolution_instances:/evolution/instances
+    environment:
+      - SERVER_URL=${SERVER_URL}
+      - AUTHENTICATION_API_KEY=${AUTHENTICATION_API_KEY}
+
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_v2
+
+      # WA Reach is strictly outbound and never reads inbound messages, chats or
+      # contacts. Persisting them would grow this DB without bound for data
+      # nothing queries. Keep only what sessions and delivery receipts need.
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      - DATABASE_SAVE_DATA_CONTACTS=false
+      - DATABASE_SAVE_DATA_CHATS=false
+      - DATABASE_SAVE_DATA_LABELS=false
+      - DATABASE_SAVE_DATA_HISTORIC=false
+
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/1
+      - CACHE_REDIS_PREFIX_KEY=evolution_v2
+      - CACHE_REDIS_SAVE_INSTANCES=true
+      - CACHE_LOCAL_ENABLED=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+  # ── Postgres (Evolution's store only — WA Reach still uses SQLite) ──────────
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=evolution
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (Evolution cache / session store) ────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  evolution_instances:
+  postgres_data:
+  redis_data:

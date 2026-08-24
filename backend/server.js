@@ -22,6 +22,10 @@ app.use(express.json({ limit: '12mb' })); // larger limit so logo data-URIs fit
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Evolution API pushes pairing codes, connection changes and delivery
+// receipts here. Authenticated by a shared secret inside the router.
+app.use('/api/evolution/webhook', require('./evolution/webhook').router());
+
 // --- Media upload storage (images / PDFs / video for scheduled sends) ---
 const MEDIA_DIR = path.join(__dirname, 'uploads', 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -211,12 +215,6 @@ app.get('/api/wa/status', authenticateToken, (req, res) => {
     const status = whatsappClient.getStatus(req.user.id);
     console.log(`WA Status requested for user ${req.user.id}. isConnected:`, status.isConnected, 'QR length:', status.currentQR ? status.currentQR.length : 0);
     res.json(status);
-});
-
-// DEBUG ONLY: Remove before production
-app.get('/api/debug/wa-status', (req, res) => {
-    // Only use for testing without auth
-    res.json(whatsappClient.getStatus(1)); // hardcoded user 1
 });
 
 app.post('/api/wa/disconnect', authenticateToken, async (req, res) => {
@@ -945,21 +943,12 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     
-    // On Server start, initialize active WhatsApp sessions for all users to catch background schedules
+    // Evolution owns session persistence, so boot just reconciles our cache
+    // with what it already has. No staggering — that only existed to avoid
+    // launching several Chromium processes at once.
     db.all('SELECT id FROM users', [], async (err, rows) => {
-        if (!err && rows.length > 0) {
-            console.log(`Booting WhatsApp sessions for ${rows.length} users with staggering...`);
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                console.log(`Booting session for user ${row.id}...`);
-                whatsappClient.initializeUserClient(row.id);
-                if (i < rows.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, i === 0 ? 5000 : 10000));
-                }
-            }
-        }
-
-        // Restore MolarPlus API sessions (LocalAuth re-auths without re-scan)
+        const userIds = (!err && rows) ? rows.map(r => r.id) : [];
+        await whatsappClient.bootAll(userIds).catch(e => console.error('[WA] bootAll error:', e.message));
         apiSessions.bootAll().catch(e => console.error('[API] bootAll error:', e.message));
     });
 });
