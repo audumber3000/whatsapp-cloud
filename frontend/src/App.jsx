@@ -8,6 +8,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
 import InboxView from './components/InboxView';
+import ErrorBoundary from './components/ErrorBoundary';
 import ResponseSummary from './components/ResponseSummary';
 import ActivityFeed from './components/ActivityFeed';
 import ApiKeyPanel from './components/ApiKeyPanel';
@@ -346,6 +347,7 @@ function MainApp() {
         </div>
 
         <div className="page-content">
+        <ErrorBoundary>
           {!isLinked && !['settings', 'contacts', 'inbox'].includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
@@ -387,6 +389,7 @@ function MainApp() {
               {activeTab === 'settings' && <SettingsView token={token} />}
             </>
           )}
+        </ErrorBoundary>
         </div>
       </div>
     </div>
@@ -633,7 +636,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
         <div className="card">
           <div className="card-header">
             <h3>Recent Automations</h3>
-            <button className="btn-text" onClick={() => setSidebarOpen(false) || setActiveTab('automations')}>View All <ArrowRight size={16} /></button>
+            <button className="btn-text" onClick={() => setActiveTab('automations')}>View All <ArrowRight size={16} /></button>
           </div>
           <div className="card-list">
             {recentAutomations.length === 0 ? <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>No automations running.</p> : null}
@@ -654,7 +657,7 @@ function DashboardView({ token, setActiveTab, userPhone, isLinked, socket }) {
         <div className="card">
           <div className="card-header">
             <h3>Recent Logs</h3>
-            <button className="btn-text" onClick={() => setSidebarOpen(false) || setActiveTab('logs')}>View All <ArrowRight size={16} /></button>
+            <button className="btn-text" onClick={() => setActiveTab('logs')}>View All <ArrowRight size={16} /></button>
           </div>
           <div className="card-list">
             {recentLogs.length === 0 ? <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>No recent activity.</p> : null}
@@ -1240,7 +1243,7 @@ function LogsView({ token }) {
         </div>
 
         {/* Load More Control */}
-        {pagination.page < pagination.totalPages && (
+        {page < pagination.totalPages && (
           <div style={{ padding: '24px', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
             <button 
               className="btn-outline" 
@@ -1254,7 +1257,7 @@ function LogsView({ token }) {
         )}
         
         <div style={{ padding: '12px 24px', fontSize: '13px', color: 'var(--text-faint)', borderTop: '1px solid var(--border)', background: 'var(--surface-sunken)', borderRadius: '0 0 12px 12px' }}>
-          Showing {currentData.length} of {pagination.total} total logs
+          Showing {currentData.length} of {pagination.total} total logs{search ? ' (filtered)' : ''}
         </div>
       </div>
     </div>
@@ -1311,7 +1314,7 @@ function SettingsView({ token }) {
              {/* Tabs Navigation */}
              <div style={{ display: 'flex', gap: '24px', borderBottom: '1px solid var(--border)' }}>
                 <button 
-                  onClick={() => setSidebarOpen(false) || setActiveTab('account')}
+                  onClick={() => setActiveTab('account')}
                   style={{ 
                     padding: '8px 4px 12px', 
                     border: 'none', 
@@ -1327,7 +1330,7 @@ function SettingsView({ token }) {
                   Account Settings
                 </button>
                 <button
-                  onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
+                  onClick={() => setActiveTab('logs')}
                   style={{ 
                     padding: '8px 4px 12px', 
                     border: 'none', 
@@ -1343,7 +1346,7 @@ function SettingsView({ token }) {
                   Notification Log
                 </button>
                 <button
-                  onClick={() => setSidebarOpen(false) || setActiveTab('api')}
+                  onClick={() => setActiveTab('api')}
                   style={{
                     padding: '8px 4px 12px',
                     border: 'none',

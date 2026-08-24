@@ -42,7 +42,7 @@ function AdminLogin({ setToken }) {
       background: 'linear-gradient(135deg, var(--brand-deep) 0%, var(--text) 100%)',
     }}>
       <div style={{
-        background: 'white', borderRadius: 'var(--r-lg)', padding: '40px', width: '100%', maxWidth: '400px',
+        background: 'var(--surface)', borderRadius: 'var(--r-lg)', padding: '40px', width: '100%', maxWidth: '400px',
         boxShadow: '0 25px 50px rgba(0,0,0,0.4)',
       }}>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
@@ -72,7 +72,7 @@ function AdminLogin({ setToken }) {
             />
           </div>
           <button type="submit" style={{
-            padding: '12px', background: 'var(--brand-deep)', color: 'white', border: 'none',
+            padding: '12px', background: 'var(--brand-deep)', color: 'var(--surface)', border: 'none',
             borderRadius: 'var(--r-md)', fontWeight: 600, fontSize: '15px', cursor: 'pointer', marginTop: '8px',
           }}>
             Sign In
@@ -113,7 +113,7 @@ function AdminDashboard({ token, setToken }) {
   };
 
   const statCardStyle = (color) => ({
-    background: 'white', borderRadius: 'var(--r-lg)', padding: '24px',
+    background: 'var(--surface)', borderRadius: 'var(--r-lg)', padding: '24px',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)', borderLeft: `4px solid ${color}`,
     flex: 1, minWidth: '160px',
   });
@@ -122,7 +122,7 @@ function AdminDashboard({ token, setToken }) {
     <div style={{ minHeight: '100vh', background: 'var(--surface-raised)', fontFamily: 'Inter, system-ui, sans-serif' }}>
       {/* Header */}
       <div style={{
-        background: 'var(--brand-deep)', color: 'white', padding: '0 32px',
+        background: 'var(--brand-deep)', color: 'var(--surface)', padding: '0 32px',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '60px',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 700, fontSize: '18px' }}>
@@ -130,10 +130,10 @@ function AdminDashboard({ token, setToken }) {
           WA Reach — Master Admin
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button onClick={fetchData} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+          <button onClick={fetchData} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'var(--surface)', padding: '8px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
             <RefreshCw size={14} /> Refresh
           </button>
-          <button onClick={handleLogout} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '8px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+          <button onClick={handleLogout} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: 'var(--surface)', padding: '8px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
             <LogOut size={14} /> Logout
           </button>
         </div>
@@ -171,7 +171,7 @@ function AdminDashboard({ token, setToken }) {
             </div>
 
             {/* Users Table */}
-            <div style={{ background: 'white', borderRadius: 'var(--r-lg)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+            <div style={{ background: 'var(--surface)', borderRadius: 'var(--r-lg)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--surface-raised)' }}>
                 <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--brand-deep)' }}>All User Accounts</h3>
                 <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '13px' }}>Platform-wide user overview</p>
@@ -187,7 +187,7 @@ function AdminDashboard({ token, setToken }) {
                   </thead>
                   <tbody>
                     {data.users.map((user, i) => (
-                      <tr key={user.id} style={{ borderBottom: '1px solid var(--surface-raised)', background: i % 2 === 0 ? 'white' : 'var(--bg)' }}>
+                      <tr key={user.id} style={{ borderBottom: '1px solid var(--surface-raised)', background: i % 2 === 0 ? 'var(--surface)' : 'var(--bg)' }}>
                         <td style={{ padding: '14px 16px', color: 'var(--text-faint)', fontWeight: 600 }}>#{user.id}</td>
                         <td style={{ padding: '14px 16px', fontWeight: 700, color: 'var(--brand-deep)' }}>{user.username}</td>
                         <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{user.email || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
