@@ -160,6 +160,54 @@ const db = new sqlite3.Database(path.join(dbDir, 'whatsapp.sqlite'), (err) => {
             // Reminders can carry an optional attachment (message becomes the caption).
             db.run(`ALTER TABLE reminders ADD COLUMN media_id INTEGER`, (err) => {});
 
+            // ── Two-way messaging ────────────────────────────────────────
+            // Inbound messages. Nothing read replies before Evolution; this is
+            // where they land.
+            db.run(`CREATE TABLE IF NOT EXISTS inbound_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                contact_id INTEGER,
+                from_number TEXT NOT NULL,
+                wa_message_id TEXT UNIQUE,
+                body TEXT,
+                media_type TEXT,
+                media_path TEXT,
+                intent TEXT,
+                is_read INTEGER DEFAULT 0,
+                received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (contact_id) REFERENCES contacts(id)
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_inbound_user_time ON inbound_messages(user_id, received_at DESC)`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_inbound_contact ON inbound_messages(contact_id)`);
+
+            // Opt-out is a hard stop; wa_valid caches the WhatsApp-registration
+            // check so we don't re-probe every send.
+            db.run(`ALTER TABLE contacts ADD COLUMN opted_out INTEGER DEFAULT 0`, () => {});
+            db.run(`ALTER TABLE contacts ADD COLUMN opted_out_at DATETIME`, () => {});
+            db.run(`ALTER TABLE contacts ADD COLUMN wa_valid INTEGER`, () => {});
+            db.run(`ALTER TABLE contacts ADD COLUMN wa_checked_at DATETIME`, () => {});
+
+            // Real delivery tracking. Until now "delivered" meant "handed to
+            // WhatsApp" — these hold the actual ack and the reply to it.
+            db.run(`ALTER TABLE automation_logs ADD COLUMN wa_message_id TEXT`, () => {});
+            db.run(`ALTER TABLE automation_logs ADD COLUMN delivery_status TEXT`, () => {});
+            db.run(`ALTER TABLE automation_logs ADD COLUMN delivered_at DATETIME`, () => {});
+            db.run(`ALTER TABLE automation_logs ADD COLUMN response TEXT`, () => {});
+            db.run(`ALTER TABLE automation_logs ADD COLUMN responded_at DATETIME`, () => {});
+            db.run(`CREATE INDEX IF NOT EXISTS idx_autolog_waid ON automation_logs(wa_message_id)`);
+
+            // Health alerting — one row per alert so we don't spam on every tick.
+            db.run(`CREATE TABLE IF NOT EXISTS health_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                detail TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_health_user_time ON health_alerts(user_id, created_at DESC)`);
+
             // Helpful indexes for the per-minute scheduler scans.
             db.run(`CREATE INDEX IF NOT EXISTS idx_autolog_status_time ON automation_logs(status, sent_time)`);
             db.run(`CREATE INDEX IF NOT EXISTS idx_reminders_status_time ON reminders(status, scheduled_time)`);

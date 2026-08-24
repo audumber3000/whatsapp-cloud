@@ -12,6 +12,8 @@ const fs = require('fs');
 const client = require('./evolution/client');
 const state = require('./evolution/state');
 const hooks = require('./evolution/webhook');
+const inbound = require('./inbound');
+const db = require('./db');
 
 let io = null;
 
@@ -85,9 +87,9 @@ const sendMessage = async (userId, phone, message) => {
         return false;
     }
     try {
-        await client.sendText(instance, phone, message);
+        const res = await client.sendText(instance, phone, message);
         console.log(`Message sent to ${phone} by user ${userId}`);
-        return true;
+        return res?.key?.id || true;
     } catch (error) {
         console.error(`Error sending message for user ${userId}:`, error.message);
         return false;
@@ -106,9 +108,9 @@ const sendMedia = async (userId, phone, { filePath, mimetype, filename, caption 
     }
     try {
         const media = fs.readFileSync(filePath).toString('base64');
-        await client.sendMedia(instance, phone, { media, mimetype, fileName: filename, caption });
+        const res = await client.sendMedia(instance, phone, { media, mimetype, fileName: filename, caption });
         console.log(`Media sent to ${phone} by user ${userId}`);
-        return true;
+        return res?.key?.id || true;
     } catch (error) {
         console.error(`Error sending media for user ${userId}:`, error.message);
         return false;
@@ -138,6 +140,80 @@ const disconnectClient = async (userId) => {
     }
 };
 
+/**
+ * A reminder with tappable Confirm / Reschedule / Cancel.
+ * The button id comes back on the reply, so the response is structured
+ * instead of free text we have to interpret.
+ */
+const sendConfirmation = async (userId, phone, { title, body, footer = '' }) => {
+    const instance = hooks.instanceNameForUser(userId);
+    if (!state.get(instance).isConnected) {
+        console.error(`[WA] User ${userId} is not connected to WhatsApp`);
+        return false;
+    }
+    try {
+        const res = await client.sendButtons(instance, phone, {
+            title, description: body, footer,
+            buttons: [
+                { id: 'confirm',    text: 'Confirm' },
+                { id: 'reschedule', text: 'Reschedule' },
+                { id: 'cancel',     text: 'Cancel' },
+            ],
+        });
+        return res?.key?.id || true;
+    } catch (error) {
+        console.error(`Error sending confirmation for user ${userId}:`, error.message);
+        return false;
+    }
+};
+
+/** Post-visit feedback as a native poll rather than a link nobody opens. */
+const sendFeedbackPoll = async (userId, phone, question, options) => {
+    const instance = hooks.instanceNameForUser(userId);
+    if (!state.get(instance).isConnected) return false;
+    try {
+        const res = await client.sendPoll(instance, phone, { name: question, values: options });
+        return res?.key?.id || true;
+    } catch (error) {
+        console.error(`Error sending poll for user ${userId}:`, error.message);
+        return false;
+    }
+};
+
+/**
+ * Which of these numbers are on WhatsApp. Results are cached on the contact so
+ * we don't re-probe, and bad rows get flagged instead of silently burning sends.
+ */
+const validateNumbers = async (userId, numbers) => {
+    const instance = hooks.instanceNameForUser(userId);
+    if (!state.get(instance).isConnected) return null;
+    try {
+        const res = await client.checkNumbers(instance, numbers);
+        const rows = Array.isArray(res) ? res : (res?.numbers || []);
+        for (const r of rows) {
+            const num = String(r.number || r.jid || '').split('@')[0].replace(/\D/g, '');
+            const ok = r.exists === true || r.exists === 'true';
+            if (!num) continue;
+            db.run(
+                'UPDATE contacts SET wa_valid = ?, wa_checked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND phone = ?',
+                [ok ? 1 : 0, userId, num]
+            );
+        }
+        return rows;
+    } catch (error) {
+        console.error(`Number validation failed for user ${userId}:`, error.message);
+        return null;
+    }
+};
+
+/** Show "typing…" before a send, so automation reads as a person. */
+const showTyping = async (userId, phone, ms = 1500) => {
+    const instance = hooks.instanceNameForUser(userId);
+    if (!state.get(instance).isConnected) return false;
+    return client.sendPresence(instance, phone, { presence: 'composing', delay: ms })
+        .then(() => true).catch(() => false);
+};
+
 const notifyUser = (userId, type, message) => {
     if (!io) return;
     io.to(`user_${userId}`).emit('notification', {
@@ -152,6 +228,25 @@ const notifyUser = (userId, type, message) => {
  * instance. No staggering — that only existed to stop simultaneous Chromium
  * launches from exhausting the box.
  */
+// Inbound replies land here. Wired once, at module load.
+inbound.wire({
+    notifyUser: (uid, type, message) => notifyUser(uid, type, message),
+    emit: (uid, payload) => { if (io) io.to(`user_${uid}`).emit('inbound_message', payload); },
+});
+hooks.onInbound((userId, instance, msg) => inbound.handle(userId, instance, msg));
+
+// Real delivery receipts. Until now the UI showed "delivered" for anything we
+// had merely handed to WhatsApp; this records what actually happened.
+hooks.onMessageStatus('user', (userId, messageId, status) => {
+    db.run(
+        `UPDATE automation_logs
+         SET delivery_status = ?,
+             delivered_at = CASE WHEN ? IN ('delivered','read') THEN CURRENT_TIMESTAMP ELSE delivered_at END
+         WHERE wa_message_id = ?`,
+        [status, status, messageId]
+    );
+});
+
 const bootAll = async (userIds = []) => {
     await state.seed();
     for (const id of userIds) initializeUserClient(id);
@@ -167,4 +262,8 @@ module.exports = {
     initializeUserClient,
     notifyUser,
     bootAll,
+    sendConfirmation,
+    sendFeedbackPoll,
+    validateNumbers,
+    showTyping,
 };

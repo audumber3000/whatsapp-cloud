@@ -21,6 +21,7 @@ const WEBHOOK_EVENTS = [
     'QRCODE_UPDATED',      // pairing code for the connect screen
     'CONNECTION_UPDATE',   // open / close / connecting — drives self-healing
     'MESSAGES_UPDATE',     // delivery receipts (sent → delivered → read)
+    'MESSAGES_UPSERT',     // inbound replies — the whole two-way story
     'SEND_MESSAGE',        // confirms our own outbound sends
 ];
 
@@ -167,6 +168,81 @@ async function sendMedia(instanceName, phone, { media, mimetype, fileName, capti
     return request('POST', `/message/sendMedia/${encodeURIComponent(instanceName)}`, body);
 }
 
+/**
+ * Interactive reply buttons. This is the difference between "reply 1 to
+ * confirm" and a patient tapping Confirm — which is most of the no-show
+ * reduction the product exists for.
+ *
+ * `buttons` is [{ id, text }]; ids come back on the inbound message so the
+ * reply is structured rather than free text to parse.
+ */
+async function sendButtons(instanceName, phone, { title, description, footer = '', buttons }) {
+    return request('POST', `/message/sendButtons/${encodeURIComponent(instanceName)}`, {
+        number: formatNumber(phone),
+        title,
+        description,
+        footer,
+        buttons: buttons.map((b) => ({ type: 'reply', displayText: b.text, id: b.id })),
+    });
+}
+
+/** Native WhatsApp poll — used for post-visit feedback. */
+async function sendPoll(instanceName, phone, { name, values, selectableCount = 1 }) {
+    return request('POST', `/message/sendPoll/${encodeURIComponent(instanceName)}`, {
+        number: formatNumber(phone), name, selectableCount, values,
+    });
+}
+
+/** Pin-drop for the clinic, sent on confirmation. */
+async function sendLocation(instanceName, phone, { name, address, latitude, longitude }) {
+    return request('POST', `/message/sendLocation/${encodeURIComponent(instanceName)}`, {
+        number: formatNumber(phone), name, address, latitude, longitude,
+    });
+}
+
+/** Voice note — a spoken reminder in the patient's own language. */
+async function sendAudio(instanceName, phone, { audio, encoding = true }) {
+    return request('POST', `/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`, {
+        number: formatNumber(phone), audio, encoding,
+    });
+}
+
+/**
+ * Which of these numbers are actually on WhatsApp.
+ * Cheaper than discovering it by failing a send, and repeated sends to dead
+ * numbers are themselves a ban signal.
+ */
+async function checkNumbers(instanceName, numbers) {
+    return request('POST', `/chat/whatsappNumbers/${encodeURIComponent(instanceName)}`, {
+        numbers: numbers.map(formatNumber),
+    });
+}
+
+/**
+ * "typing…" before a message lands. Small, but it serves the same instinct as
+ * the existing send jitter and message-variation rotation: look like a person.
+ */
+async function sendPresence(instanceName, phone, { presence = 'composing', delay = 1500 } = {}) {
+    return request('POST', `/chat/sendPresence/${encodeURIComponent(instanceName)}`, {
+        number: formatNumber(phone), presence, delay,
+    });
+}
+
+/** Pull down media a patient sent us (tooth photo, X-ray, old prescription). */
+async function downloadMedia(instanceName, messageKey) {
+    return request('POST', `/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`, {
+        message: { key: messageKey },
+        convertToMp4: false,
+    }, { timeoutMs: 60000 });
+}
+
+/** Mark an inbound message read, so the patient sees blue ticks. */
+async function markAsRead(instanceName, readMessages) {
+    return request('POST', `/chat/markMessageAsRead/${encodeURIComponent(instanceName)}`, {
+        readMessages,
+    });
+}
+
 module.exports = {
     EvolutionError,
     WEBHOOK_EVENTS,
@@ -180,4 +256,12 @@ module.exports = {
     deleteInstance,
     sendText,
     sendMedia,
+    sendButtons,
+    sendPoll,
+    sendLocation,
+    sendAudio,
+    checkNumbers,
+    sendPresence,
+    downloadMedia,
+    markAsRead,
 };

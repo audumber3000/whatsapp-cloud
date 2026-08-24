@@ -22,9 +22,15 @@ const WEBHOOK_SECRET = process.env.EVOLUTION_WEBHOOK_SECRET || '';
 
 /** Handlers registered by the two stacks for message-status events. */
 const messageStatusHandlers = { user: null, api: null };
+/** Handler for inbound messages (clinic stack only — the B2B path is outbound). */
+let inboundHandler = null;
 
 function onMessageStatus(kind, fn) {
     messageStatusHandlers[kind] = fn;
+}
+
+function onInbound(fn) {
+    inboundHandler = fn;
 }
 
 /**
@@ -172,6 +178,23 @@ function handleEvent(body) {
             break;
         }
 
+        case 'messages.upsert': {
+            // Inbound only. Evolution echoes our own sends here too, and
+            // processing those would create a feedback loop.
+            const msgs = Array.isArray(data) ? data : (data.messages || [data]);
+            for (const msg of msgs) {
+                if (!msg || msg.key?.fromMe) continue;
+                const userId = userIdFromInstance(instance);
+                if (userId == null || Number.isNaN(userId)) continue;
+                try {
+                    inboundHandler?.(userId, instance, normalizeInbound(msg));
+                } catch (e) {
+                    console.error('[evolution] inbound handler failed:', e.message);
+                }
+            }
+            break;
+        }
+
         case 'messages.update':
         case 'send.message': {
             const messageId = extractMessageId(data);
@@ -192,9 +215,59 @@ function handleEvent(body) {
     }
 }
 
+/**
+ * Flatten Evolution's message envelope into the few fields we care about.
+ * WhatsApp nests text in several places depending on message type, and button
+ * replies carry the id we set when sending — which is what makes a reply
+ * structured instead of guesswork.
+ */
+function normalizeInbound(msg) {
+    const m = msg.message || {};
+    const text =
+        m.conversation ||
+        m.extendedTextMessage?.text ||
+        m.imageMessage?.caption ||
+        m.videoMessage?.caption ||
+        m.documentMessage?.caption ||
+        '';
+
+    const buttonId =
+        m.buttonsResponseMessage?.selectedButtonId ||
+        m.templateButtonReplyMessage?.selectedId ||
+        m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+        null;
+
+    const buttonText =
+        m.buttonsResponseMessage?.selectedDisplayText ||
+        m.listResponseMessage?.title ||
+        null;
+
+    let mediaType = null;
+    if (m.imageMessage) mediaType = 'image';
+    else if (m.videoMessage) mediaType = 'video';
+    else if (m.audioMessage) mediaType = 'audio';
+    else if (m.documentMessage) mediaType = 'document';
+
+    const pollVote = m.pollUpdateMessage ? (m.pollUpdateMessage.vote || null) : null;
+
+    return {
+        key: msg.key,
+        messageId: msg.key?.id || null,
+        from: String(msg.key?.remoteJid || '').split('@')[0].replace(/\D/g, ''),
+        isGroup: String(msg.key?.remoteJid || '').endsWith('@g.us'),
+        text: buttonText || text,
+        buttonId,
+        mediaType,
+        pollVote,
+        timestamp: msg.messageTimestamp || null,
+    };
+}
+
 module.exports = {
     router,
     onMessageStatus,
+    onInbound,
+    normalizeInbound,
     instanceNameForUser,
     instanceNameForSession,
     userIdFromInstance,

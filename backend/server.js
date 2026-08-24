@@ -336,6 +336,119 @@ app.post('/api/reminders', authenticateToken, (req, res) => {
     });
 });
 
+// --- Inbox (two-way messaging) ---
+// Nothing read inbound messages before Evolution; these expose what now lands.
+
+// Conversation list: one row per contact, newest first, with unread counts.
+app.get('/api/inbox', authenticateToken, (req, res) => {
+    db.all(`
+        SELECT im.contact_id,
+               COALESCE(c.name, 'Unknown') AS name,
+               im.from_number,
+               COUNT(*) AS total,
+               SUM(CASE WHEN im.is_read = 0 THEN 1 ELSE 0 END) AS unread,
+               MAX(im.received_at) AS last_at,
+               (SELECT body FROM inbound_messages x
+                 WHERE x.user_id = im.user_id AND x.from_number = im.from_number
+                 ORDER BY x.received_at DESC LIMIT 1) AS last_body,
+               (SELECT intent FROM inbound_messages x
+                 WHERE x.user_id = im.user_id AND x.from_number = im.from_number
+                 ORDER BY x.received_at DESC LIMIT 1) AS last_intent,
+               COALESCE(c.opted_out, 0) AS opted_out
+        FROM inbound_messages im
+        LEFT JOIN contacts c ON c.id = im.contact_id
+        WHERE im.user_id = ?
+        GROUP BY im.from_number
+        ORDER BY last_at DESC
+        LIMIT 100
+    `, [req.user.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Full thread with one contact: what they sent us, and what we sent them.
+app.get('/api/inbox/:number', authenticateToken, (req, res) => {
+    const num = String(req.params.number).replace(/\D/g, '');
+    db.all(
+        `SELECT id, body, media_type, media_path, intent, received_at, 'in' AS direction
+           FROM inbound_messages WHERE user_id = ? AND from_number = ?
+         UNION ALL
+         SELECT al.id, al.content AS body, NULL, NULL,
+                al.response AS intent, al.sent_time AS received_at, 'out' AS direction
+           FROM automation_logs al
+           JOIN contacts c ON c.id = al.contact_id
+          WHERE c.user_id = ? AND c.phone = ? AND al.status IN ('delivered','sent','read','failed')
+         ORDER BY received_at ASC LIMIT 200`,
+        [req.user.id, num, req.user.id, num],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            db.run('UPDATE inbound_messages SET is_read = 1 WHERE user_id = ? AND from_number = ?',
+                [req.user.id, num]);
+            res.json(rows || []);
+        }
+    );
+});
+
+// Reply by hand from the inbox.
+app.post('/api/inbox/:number/reply', authenticateToken, async (req, res) => {
+    const num = String(req.params.number).replace(/\D/g, '');
+    const { text } = req.body || {};
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Message text required' });
+
+    await whatsappClient.showTyping(req.user.id, num, 1200).catch(() => {});
+    const ok = await whatsappClient.sendMessage(req.user.id, num, text.trim());
+    if (!ok) return res.status(409).json({ error: 'WhatsApp is not connected' });
+    res.json({ success: true, message_id: typeof ok === 'string' ? ok : null });
+});
+
+// --- Contact health ---
+
+// Ask WhatsApp which of these numbers actually exist before we burn sends on them.
+app.post('/api/contacts/validate', authenticateToken, async (req, res) => {
+    db.all('SELECT phone FROM contacts WHERE user_id = ?', [req.user.id], async (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const numbers = (rows || []).map(r => r.phone).filter(Boolean);
+        if (!numbers.length) return res.json({ checked: 0, invalid: 0 });
+
+        const result = await whatsappClient.validateNumbers(req.user.id, numbers);
+        if (!result) return res.status(409).json({ error: 'WhatsApp is not connected' });
+
+        db.get('SELECT COUNT(*) AS n FROM contacts WHERE user_id = ? AND wa_valid = 0',
+            [req.user.id], (e2, row) => {
+                res.json({ checked: numbers.length, invalid: row ? row.n : 0 });
+            });
+    });
+});
+
+// Manual opt-out toggle, for when someone asks the front desk directly.
+app.patch('/api/contacts/:id/optout', authenticateToken, (req, res) => {
+    const optOut = req.body?.opted_out ? 1 : 0;
+    db.run(
+        `UPDATE contacts SET opted_out = ?, opted_out_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END
+         WHERE id = ? AND user_id = ?`,
+        [optOut, optOut, req.params.id, req.user.id],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
+            if (optOut) {
+                db.run(`UPDATE automation_logs SET status = 'cancelled', error_reason = 'Contact opted out'
+                        WHERE contact_id = ? AND status = 'pending'`, [req.params.id]);
+            }
+            res.json({ success: true, opted_out: !!optOut });
+        }
+    );
+});
+
+// --- Health ---
+app.get('/api/health/alerts', authenticateToken, (req, res) => {
+    db.all('SELECT kind, detail, created_at FROM health_alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
+        [req.user.id], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(rows || []);
+        });
+});
+
 // --- Dashboard & Meta Endpoints ---
 app.get('/api/dashboard/stats', authenticateToken, (req, res) => {
     const stats = { sent: 0, failed: 0, activeAutomations: 0, phone: whatsappClient.getStatus(req.user.id).phone };

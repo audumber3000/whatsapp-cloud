@@ -27,6 +27,62 @@ async function logNotification(userId, type, category, recipient, content, statu
     );
 }
 
+/* ── failure alerting ──────────────────────────────────────────────────────
+ * On 20 Aug a WhatsApp logout produced 43 consecutive failures over nearly
+ * four hours and nobody found out until the next morning, because nothing in
+ * this app ever raised an alarm. This is that alarm.
+ *
+ * Counting is per-user and in-memory; the DB row exists to rate-limit repeats
+ * across restarts, not to drive the logic.
+ */
+const FAIL_THRESHOLD = 3;
+const ALERT_COOLDOWN_MIN = 60;
+const failStreak = new Map();
+
+async function recordSendOutcome(userId, ok) {
+    if (ok) { failStreak.set(userId, 0); return; }
+
+    const n = (failStreak.get(userId) || 0) + 1;
+    failStreak.set(userId, n);
+    if (n !== FAIL_THRESHOLD) return; // fire once per streak, not every failure
+
+    // Don't re-alert about the same thing all night.
+    const recent = await new Promise((res) => db.get(
+        `SELECT id FROM health_alerts WHERE user_id = ? AND kind = 'send_failures'
+           AND created_at > datetime('now', ?)`,
+        [userId, `-${ALERT_COOLDOWN_MIN} minutes`], (e, r) => res(r)
+    ));
+    if (recent) return;
+
+    const detail = `${n} consecutive send failures`;
+    db.run('INSERT INTO health_alerts (user_id, kind, detail) VALUES (?, ?, ?)',
+        [userId, 'send_failures', detail]);
+
+    const user = await new Promise((res) => db.get(
+        'SELECT username, email FROM users WHERE id = ?', [userId], (e, r) => res(r)));
+
+    const status = getStatus(userId);
+    const cause = status.isConnected
+        ? 'WhatsApp still reports connected, so this may be bad numbers or rate limiting.'
+        : 'WhatsApp is NOT connected — the phone most likely needs to be linked again.';
+
+    const subject = '⚠️ WA Reach: messages are failing';
+    const body =
+        `${detail} for account "${user?.username || userId}".\n\n` +
+        `${cause}\n\n` +
+        `Nothing further will be delivered until this is fixed. ` +
+        `Open WA Reach and check the connection status.`;
+
+    console.error(`[ALERT] user ${userId}: ${detail}. ${cause}`);
+    notifyUser(userId, 'error', `${detail} — check your WhatsApp connection`);
+
+    // Email is the channel that still works when WhatsApp is the thing broken.
+    for (const to of String(user?.email || '').split(',').map(e => e.trim()).filter(Boolean)) {
+        const sent = await sendEmail(to, subject, body);
+        logNotification(userId, 'email', 'health_alert', to, detail, sent ? 'sent' : 'failed');
+    }
+}
+
 // Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -82,6 +138,7 @@ cron.schedule('* * * * *', () => {
         JOIN contacts c ON al.contact_id = c.id
         JOIN automations a ON al.automation_id = a.id
         WHERE al.status = 'pending' AND al.sent_time <= ?
+          AND COALESCE(c.opted_out, 0) = 0
     `, [currentIsoString], async (err, rows) => {
         if (err) {
             console.error('Error querying automations:', err);
@@ -94,6 +151,7 @@ cron.schedule('* * * * *', () => {
 
         for (const row of rows) {
             const { log_id, contact_id, automation_id, phone, user_id, message_template, auto_status, active_days, sent_time } = row;
+            let lastMessageId = null;
             
             let messageBlocks = [];
             try {
@@ -152,7 +210,12 @@ cron.schedule('* * * * *', () => {
                 if (b.media_id) return (b.media_name ? `📎 ${b.media_name}` : '📎 [attachment]') + (firstVar ? ` — ${firstVar}` : '');
                 return firstVar;
             }).filter(Boolean).join('\n'); // Simplified for logging
-            db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ? WHERE id = ?`, [newStatus, logReason, sentContent, log_id]);
+            // lastMessageId lets the MESSAGES_UPDATE webhook attach a real ack
+            // to this row later. Until now "delivered" only meant "handed over".
+            db.run(`UPDATE automation_logs SET status = ?, error_reason = ?, content = ?, wa_message_id = ? WHERE id = ?`,
+                [newStatus, logReason, sentContent, (typeof lastMessageId === 'string' ? lastMessageId : null), log_id]);
+
+            recordSendOutcome(user_id, overallSuccess);
 
             // Reschedule for tomorrow if the automation is still active
             if (auto_status === 'Active') {

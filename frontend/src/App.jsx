@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   MessageCircle, LayoutDashboard, Zap, Activity,
-  Settings, Moon, Sun, Menu, Search, LogOut, Link2Off,
+  Settings, Moon, Sun, Menu, Inbox, Search, LogOut, Link2Off,
   CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
   Upload, Paperclip, Users, Pencil
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
+import InboxView from './components/InboxView';
 
 import { io } from 'socket.io-client';
 import {
@@ -87,6 +88,8 @@ function MainApp() {
   const [token, setToken] = useState(localStorage.getItem('wa_token') || null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [socketRef, setSocketRef] = useState(null);
+  const [unread, setUnread] = useState(0);
 
   // Colour theme. Default follows the OS; an explicit choice is remembered and
   // stamped on <html> so the CSS [data-theme] blocks win over the media query.
@@ -115,11 +118,20 @@ function MainApp() {
   // Notifications State
   const [notifications, setNotifications] = useState([]);
 
+  // Toasts were built inline inside the socket handler; this is the same
+  // behaviour as a callable so other code paths can raise one too.
+  const addNotification = useCallback((type, message) => {
+    const id = Date.now() + Math.random();
+    setNotifications((prev) => [...prev, { type, message, id }]);
+    setTimeout(() => setNotifications((prev) => prev.filter((n) => n.id !== id)), 5000);
+  }, []);
+
   // Setup Socket.io connection for real-time updates
   useEffect(() => {
     if (token) {
       console.log('Connecting to Socket.io...');
-      const socket = io(SOCKET_URL, {
+      let socket;
+      socket = io(SOCKET_URL, {
         path: '/socket.io/',
         transports: ['websocket', 'polling'],
         auth: { token }
@@ -136,14 +148,24 @@ function MainApp() {
         setUserPhone(data.phone);
       });
 
+      setSocketRef(socket);
+
+      // A patient replying should be visible immediately, wherever you are.
+      socket.on('inbound_message', (msg) => {
+        setUnread((n) => n + 1);
+        const who = msg.name && msg.name !== 'Unknown' ? msg.name : `+${msg.from}`;
+        const label = msg.intent === 'confirm' ? 'confirmed'
+          : msg.intent === 'opt_out' ? 'opted out'
+          : msg.intent === 'reschedule' ? 'asked to reschedule'
+          : msg.intent === 'cancel' ? 'cancelled'
+          : 'replied';
+        addNotification(msg.intent === 'confirm' ? 'success' : msg.intent === 'opt_out' ? 'warning' : 'info',
+          `${who} ${label}`);
+      });
+
       socket.on('notification', (data) => {
         console.log('New notification received:', data);
-        const id = Date.now();
-        setNotifications(prev => [...prev, { ...data, id }]);
-        // Auto remove after 5 seconds
-        setTimeout(() => {
-          setNotifications(prev => prev.filter(n => n.id !== id));
-        }, 5000);
+        addNotification(data.type, data.message);
       });
 
       socket.on('connect_error', (err) => {
@@ -151,6 +173,7 @@ function MainApp() {
       });
 
       return () => {
+        setSocketRef(null);
         socket.disconnect();
       };
     }
@@ -235,6 +258,14 @@ function MainApp() {
             Contacts
           </div>
           <div
+            className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`}
+            onClick={() => { setSidebarOpen(false); setUnread(0); setActiveTab('inbox'); }}
+          >
+            <Inbox size={20} />
+            Inbox
+            {unread > 0 && <span className="inbox-unread" style={{ marginLeft: 'auto' }}>{unread}</span>}
+          </div>
+          <div
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
           >
@@ -281,6 +312,7 @@ function MainApp() {
             )}
             {activeTab === 'automations' && 'Manage Automations'}
             {activeTab === 'contacts' && 'Contacts'}
+            {activeTab === 'inbox' && 'Inbox'}
             {activeTab === 'logs' && 'Message Logs'}
             {activeTab === 'settings' && 'User Settings'}
           </div>
@@ -306,7 +338,7 @@ function MainApp() {
         </div>
 
         <div className="page-content">
-          {!isLinked && activeTab !== 'settings' && activeTab !== 'contacts' ? (
+          {!isLinked && !['settings', 'contacts', 'inbox'].includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -335,6 +367,14 @@ function MainApp() {
               {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} />}
               {activeTab === 'automations' && <AutomationsView token={token} />}
               {activeTab === 'contacts' && <ContactsView token={token} />}
+              {activeTab === 'inbox' && (
+                <InboxView
+                  apiUrl={API_URL}
+                  token={token}
+                  socket={socketRef}
+                  onToast={(type, msg) => addNotification(type, msg)}
+                />
+              )}
               {activeTab === 'logs' && <LogsView token={token} />}
               {activeTab === 'settings' && <SettingsView token={token} />}
             </>
