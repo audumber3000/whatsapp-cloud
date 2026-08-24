@@ -108,9 +108,22 @@ const authenticateToken = (req, res, next) => {
         // tenants, so a stale token must re-authenticate rather than degrade.
         if (!user.org_id) return res.status(401).json({ error: 'Session out of date — please sign in again' });
         req.user = user;
-        next();
+        // A password change must invalidate tokens issued before it, or
+        // "sign out everywhere" would only apply to refresh tokens.
+        db.get('SELECT password_changed_at FROM users WHERE id = ?', [user.id], (e, row) => {
+            const changedAtSec = row ? Math.floor(new Date(row.password_changed_at).getTime() / 1000) : 0;
+            if (!e && row && user.iat && changedAtSec > user.iat) {
+                return res.status(401).json({ error: 'Password changed — please sign in again' });
+            }
+            next();
+        });
+        return;
     });
 };
+
+const auth = require('./auth');
+// Account management: profile, password change, reset, sessions, refresh.
+app.use('/api/account', require('./authRoutes').router({ authenticateToken, throttleAuth }));
 
 // --- Auth Endpoints ---
 app.post('/api/signup', throttleAuth, async (req, res) => {
@@ -121,7 +134,10 @@ app.post('/api/signup', throttleAuth, async (req, res) => {
         // Signing up creates a workspace and makes you its owner — everything
         // owned (contacts, automations, keys) belongs to the org, not to you.
         try {
-            const slugBase = String(username).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workspace';
+            const weak = auth.validatePassword(password, { username });
+        if (weak) return res.status(400).json({ error: weak });
+
+        const slugBase = String(username).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workspace';
             const created = await db.tx(async (t) => {
                 const existing = await t.one('SELECT id FROM users WHERE username = ?', [username]);
                 if (existing) return null;
@@ -133,6 +149,9 @@ app.post('/api/signup', throttleAuth, async (req, res) => {
                 return { userId: u.id, orgId: o.id };
             });
             if (!created) return res.status(400).json({ error: 'Username already exists' });
+            // Register the new instance in the resolver cache, or the first send
+            // would look up a name that is not there yet.
+            await require('./orgInstances').ensureFor(created.orgId).catch(() => {});
             return res.status(201).json({ message: 'User created successfully' });
         } catch (e) {
             return res.status(500).json({ error: 'Could not create account' });
@@ -171,8 +190,16 @@ app.post('/api/login', throttleAuth, (req, res) => {
                 const accessToken = jwt.sign(
                     { username: user.username, id: user.id, org_id: m.org_id, role: m.role },
                     JWT_SECRET, { expiresIn: config.jwtExpiresIn });
+
+                // A refresh token makes logout and "sign out other devices"
+                // possible at all — the access token alone was unrevocable.
+                const session = await auth.createSession(user.id, {
+                    ip: req.ip, userAgent: req.get('user-agent'),
+                });
+
                 res.json({
                     accessToken,
+                    refresh_token: session.refresh,
                     user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email },
                     org: { id: m.org_id, name: m.org_name, slug: m.org_slug, role: m.role },
                 });
