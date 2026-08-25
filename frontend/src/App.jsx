@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Sun, Menu, Inbox, Search, LogOut, Link2Off,
@@ -11,6 +12,7 @@ import InboxView from './components/InboxView';
 import ErrorBoundary from './components/ErrorBoundary';
 import AppHeader from './components/AppHeader';
 import ProfileView from './components/ProfileView';
+import NotFound from './components/NotFound';
 import { useConfirm } from './components/ui/ConfirmDialog';
 import ResponseSummary from './components/ResponseSummary';
 import ActivityFeed from './components/ActivityFeed';
@@ -83,9 +85,22 @@ const TIMEZONES = [
 ];
 
 // Top-level router: clinic SSO dashboard vs the normal app.
+// Which URL maps to which screen. Navigation used to be a useState value, so
+// the URL was always "/" — nothing could be linked or bookmarked, refresh
+// always dumped you on the dashboard, and browser Back left the app entirely.
+const TABS = ['dashboard', 'inbox', 'automations', 'contacts', 'logs', 'settings', 'profile'];
+const pathToTab = (pathname) => {
+  const seg = pathname.replace(/^\/+|\/+$/g, '').split('/')[0];
+  if (!seg) return 'dashboard';
+  return TABS.includes(seg) ? seg : null;   // null = unknown path
+};
+const tabToPath = (tab) => (tab === 'dashboard' ? '/' : `/${tab}`);
+
 function App() {
-  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/clinic')) {
-    const ssoToken = new URLSearchParams(window.location.search).get('token');
+  const location = useLocation();
+
+  if (location.pathname.startsWith('/clinic')) {
+    const ssoToken = new URLSearchParams(location.search).get('token');
     return <ClinicDashboard ssoToken={ssoToken} />;
   }
   return <MainApp />;
@@ -93,7 +108,12 @@ function App() {
 
 function MainApp() {
   const [token, setToken] = useState(localStorage.getItem('wa_token') || null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const resolvedTab = pathToTab(location.pathname);
+  const activeTab = resolvedTab || 'dashboard';
+  const notFound = resolvedTab === null;
+  const setActiveTab = useCallback((tab) => navigate(tabToPath(tab)), [navigate]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [socketRef, setSocketRef] = useState(null);
   const [me, setMe] = useState(null);
@@ -260,56 +280,68 @@ function MainApp() {
           WA Reach
         </div>
 
-        <div className="nav-menu">
+        <nav className="nav-menu" aria-label="Main">
           <div className="nav-section">Overview</div>
-          <div
+          <button
+            type="button"
             className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('dashboard')}
+            aria-current={activeTab === 'dashboard' ? 'page' : undefined}
           >
             <LayoutDashboard size={19} />
             Dashboard
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`}
             onClick={() => { setSidebarOpen(false); setUnread(0); setActiveTab('inbox'); }}
+            aria-current={activeTab === 'inbox' ? 'page' : undefined}
           >
             <Inbox size={19} />
             Inbox
             {unread > 0 && <span className="inbox-unread" style={{ marginLeft: 'auto' }}>{unread}</span>}
-          </div>
+          </button>
 
           <div className="nav-section">Messaging</div>
-          <div
+          <button
+            type="button"
             className={`nav-item ${activeTab === 'automations' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('automations')}
+            aria-current={activeTab === 'automations' ? 'page' : undefined}
           >
             <Zap size={19} />
             Automations
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('contacts')}
+            aria-current={activeTab === 'contacts' ? 'page' : undefined}
           >
             <Users size={19} />
             Contacts
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
             onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
+            aria-current={activeTab === 'logs' ? 'page' : undefined}
           >
             <Activity size={19} />
             Activity Logs
-          </div>
+          </button>
 
           <div className="nav-section">Settings &amp; Help</div>
-          <div
+          <button
+             type="button"
              className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
              onClick={() => setSidebarOpen(false) || setActiveTab('settings')}
+             aria-current={activeTab === 'settings' ? 'page' : undefined}
           >
             <Settings size={19} />
             Settings
-          </div>
-        </div>
+          </button>
+        </nav>
 
         <div className="sidebar-footer">
           <div className="sidebar-footer-title">Status: {isLinked ? 'Connected' : 'Disconnected'}</div>
@@ -340,7 +372,9 @@ function MainApp() {
 
         <div className="page-content">
         <ErrorBoundary>
-          {!isLinked && !['settings', 'contacts', 'inbox', 'profile'].includes(activeTab) ? (
+          {notFound ? (
+            <NotFound onHome={() => setActiveTab('dashboard')} />
+          ) : !isLinked && !['settings', 'contacts', 'inbox', 'profile'].includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
