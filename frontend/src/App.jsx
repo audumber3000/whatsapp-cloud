@@ -1030,6 +1030,15 @@ function AutomationsView({ token, onToast }) {
                 <div>
                   <span className="lbl">Queue size:</span> {task.count}
                 </div>
+                {task.count === 0 && task.status === 'Active' && (
+                  <div className="alert-box warning" style={{ marginTop: 8, padding: '8px 10px', fontSize: 12.5 }}>
+                    <AlertTriangle size={14} style={{ flex: 'none', marginTop: 1 }} />
+                    <span>
+                      <b>Nothing queued.</b> This has no recipients, so it will never send.
+                      Open Edit and add contacts.
+                    </span>
+                  </div>
+                )}
                 {task.timezone_offset !== undefined && (
                   <div style={{ fontSize: '11px', color: 'var(--text-faint)', marginTop: '4px' }}>
                     <Clock size={10} style={{ verticalAlign: 'middle', marginRight: '4px' }} />

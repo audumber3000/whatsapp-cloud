@@ -791,6 +791,16 @@ app.post('/api/automations', authenticateToken, (req, res) => {
 
     const orgId = req.user.org_id;
 
+    // An automation with no recipients is Active, scheduled, and incapable of
+    // ever sending anything — which is exactly what happened to "fat 2": it
+    // queued zero rows and then looked, on the card, like a working automation
+    // that simply never fired. Refuse it rather than accept a silent no-op.
+    if (!contactList.length) {
+        return res.status(400).json({
+            error: 'Add at least one recipient — an automation with no contacts can never send.',
+        });
+    }
+
     // Default to server offset if not provided (for older clients)
     const offsetMins = clientOffset !== undefined ? clientOffset : new Date().getTimezoneOffset();
     const daysArray = active_days || [0, 1, 2, 3, 4, 5, 6];
@@ -878,13 +888,19 @@ app.post('/api/automations', authenticateToken, (req, res) => {
                 });
 
                 function insertLogAndReminder(contactId, scheduleDate) {
-                    db.run(`INSERT INTO automation_logs (automation_id, contact_id, status) VALUES (?, ?, 'pending')`, [automationId, contactId], function (errLog) {
-                        if (!errLog) {
-                            const logId = this.lastID;
-                            const isoString = scheduleDate.toISOString();
-                            db.run(`UPDATE automation_logs SET sent_time = ? WHERE id = ?`, [isoString, logId]);
-                        }
-                    });
+                    // org_id is NOT NULL. Omitting it made every one of these
+                    // inserts fail, and `if (!errLog)` swallowed the error — so
+                    // creating an automation queued nothing at all and still
+                    // reported success. That is why automations never fired.
+                    db.run(
+                        `INSERT INTO automation_logs (org_id, automation_id, contact_id, status, sent_time)
+                         VALUES (?, ?, ?, 'pending', ?)`,
+                        [orgId, automationId, contactId, scheduleDate.toISOString()],
+                        function (errLog) {
+                            if (errLog) {
+                                console.error('[automations] could not queue a message:', errLog.message);
+                            }
+                        });
                 }
             });
 
@@ -926,6 +942,14 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
         : String(contacts || '').split(',').map((c) => c.replace(/\D/g, '')).filter(Boolean);
 
     const orgId = req.user.org_id;
+
+    // Same guard on update: saving an edit that clears the recipients would
+    // quietly turn a working automation into one that can never fire.
+    if (!contactList.length) {
+        return res.status(400).json({
+            error: 'Add at least one recipient — an automation with no contacts can never send.',
+        });
+    }
 
     // First ensure ownership
     db.get('SELECT id FROM automations WHERE id = ? AND org_id = ?', [id, orgId], (errCheck, rowCheck) => {
@@ -1020,13 +1044,13 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
                         });
 
                         function insertLogAndReminder(contactId, scheduleDate) {
-                            db.run(`INSERT INTO automation_logs (automation_id, contact_id, status) VALUES (?, ?, 'pending')`, [id, contactId], function (errLog) {
-                                if (!errLog) {
-                                    const logId = this.lastID;
-                                    const isoString = scheduleDate.toISOString();
-                                    db.run(`UPDATE automation_logs SET sent_time = ? WHERE id = ?`, [isoString, logId]);
-                                }
-                            });
+                            db.run(
+                                `INSERT INTO automation_logs (org_id, automation_id, contact_id, status, sent_time)
+                                 VALUES (?, ?, ?, 'pending', ?)`,
+                                [orgId, id, contactId, scheduleDate.toISOString()],
+                                function (errLog) {
+                                    if (errLog) console.error('[automations] could not queue a message:', errLog.message);
+                                });
                         }
                     });
 

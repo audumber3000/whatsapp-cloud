@@ -301,9 +301,17 @@ cron.schedule('* * * * *', () => {
                       const nextScheduleClient = new Date(clientNextDate.getTime() + (randomOffsetMins * 60 * 1000));
                       const nextScheduleUTC = new Date(nextScheduleClient.getTime() + (offsetMins * 60000));
 
+                      // org_id is NOT NULL — without it this insert fails and the
+                      // automation never queues its next occurrence, so even one
+                      // that fired once would silently stop for good. No callback
+                      // meant nothing ever reported it.
                       db.run(
-                          `INSERT INTO automation_logs (automation_id, contact_id, status, sent_time) VALUES (?, ?, 'pending', ?)`, 
-                          [automation_id, contact_id, nextScheduleUTC.toISOString()]
+                          `INSERT INTO automation_logs (org_id, automation_id, contact_id, status, sent_time)
+                           VALUES (?, ?, ?, 'pending', ?)`,
+                          [org_id, automation_id, contact_id, nextScheduleUTC.toISOString()],
+                          (errNext) => {
+                              if (errNext) console.error('[scheduler] could not queue the next run:', errNext.message);
+                          }
                       );
                   });
               }
