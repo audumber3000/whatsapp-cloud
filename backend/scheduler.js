@@ -88,6 +88,47 @@ async function recordSendOutcome(orgId, ok) {
     }
 }
 
+
+/**
+ * Read a message template into blocks, whatever shape it arrives in.
+ *
+ * Under SQLite this column was TEXT holding a JSON string. It is jsonb now and
+ * node-pg returns a parsed value, so JSON.parse throws — and the old fallback
+ * was String(value), which for an array of blocks is the literal text
+ * "[object Object]". Real patients received that.
+ *
+ * Never returns a block whose text is not a string, so a malformed template
+ * degrades to sending nothing rather than to sending garbage.
+ */
+/** Tolerates a parsed jsonb array or a legacy JSON string. */
+function toDays(v) {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') { try { const p = JSON.parse(v); if (Array.isArray(p)) return p; } catch { /* fall through */ } }
+    return [0, 1, 2, 3, 4, 5, 6];
+}
+
+function toBlocks(template) {
+    let v = template;
+    if (typeof v === 'string') {
+        try { v = JSON.parse(v); } catch { return [{ variations: [template] }]; }
+    }
+    if (Array.isArray(v)) {
+        return v
+            .map((b) => (b && typeof b === 'object')
+                ? { ...b, variations: (b.variations || []).filter((x) => typeof x === 'string') }
+                : null)
+            .filter(Boolean);
+    }
+    // A bare object with variations is still usable; anything else is not.
+    if (v && typeof v === 'object' && Array.isArray(v.variations)) {
+        return [{ ...v, variations: v.variations.filter((x) => typeof x === 'string') }];
+    }
+    if (v && typeof v === 'object' && typeof v.text === 'string') {
+        return [{ variations: [v.text] }];
+    }
+    return [];
+}
+
 // Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -185,19 +226,11 @@ cron.schedule('* * * * *', () => {
               const { log_id, contact_id, automation_id, phone, org_id, message_template, auto_status, active_days, sent_time, auto_name, ask_confirmation } = row;
               let lastMessageId = null;
             
-              let messageBlocks = [];
-              try {
-                  // Determine if it is a JSON array of blocks
-                  const parsed = JSON.parse(message_template);
-                  if (Array.isArray(parsed)) {
-                      messageBlocks = parsed;
-                  } else {
-                      messageBlocks = [{ variations: [String(message_template)] }];
-                  }
-              } catch (e) {
-                  // Fallback to simple string
-                  messageBlocks = [{ variations: [String(message_template)] }];
-              }
+              // message_template is jsonb, so node-pg hands back a parsed value.
+              // JSON.parse on an array throws, and the old fallback then did
+              // String(array) — which is literally "[object Object]". That is
+              // what went out over WhatsApp instead of the clinic's message.
+              const messageBlocks = toBlocks(message_template);
 
               let overallSuccess = true;
 
@@ -270,12 +303,10 @@ cron.schedule('* * * * *', () => {
                   db.get(`SELECT start_time, end_time, active_days, timezone_offset FROM automations WHERE id = ?`, [automation_id], (errAuto, autoDetails) => {
                       if (errAuto || !autoDetails) return;
 
-                      let daysArray;
-                      try {
-                          daysArray = JSON.parse(autoDetails.active_days) || [0,1,2,3,4,5,6];
-                      } catch(e) {
-                          daysArray = [0,1,2,3,4,5,6];
-                      }
+                      // Same jsonb trap: JSON.parse on the parsed array threw and
+                      // silently fell back to "every day", so the next run
+                      // ignored the schedule the clinic actually set.
+                      const daysArray = toDays(autoDetails.active_days);
 
                       const offsetMins = autoDetails.timezone_offset || 0;
                       const [startH, startM] = autoDetails.start_time.split(':').map(Number);

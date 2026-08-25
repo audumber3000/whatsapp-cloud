@@ -865,12 +865,26 @@ app.post('/api/automations', authenticateToken, (req, res) => {
             const adjustedWindowMinutes = (clientEndTime - clientBaseDate) / (1000 * 60);
             const actualBaseInterval = Math.max(adjustedWindowMinutes / Math.max(contactCount, 1), 1); 
 
+            /**
+             * Jitter must not push a send outside the window the clinic set —
+             * a negative jitter on the first message would schedule it before
+             * the window opens, and the scheduler would fire it immediately.
+             */
+            const windowStartMs = absoluteBaseDateUTC.getTime();
+            const windowEndMs = windowStartMs + adjustedWindowMinutes * 60 * 1000;
+            const clampToWindow = (ms) => new Date(Math.min(Math.max(ms, windowStartMs), windowEndMs));
+
             let currentTimeOffset = 0;
             
             contactList.forEach((contactPhone) => {
                 const jitterMs = (Math.random() * 0.6 - 0.3) * actualBaseInterval * 60 * 1000;
+                // Step AFTER placing this one. Incrementing first pushed the
+                // very first message a whole interval into the window, so a
+                // one-recipient automation fired at the end of its window
+                // rather than the start — it looked like nothing happened.
+                const scheduledTime = clampToWindow(
+                    absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
                 currentTimeOffset += actualBaseInterval;
-                const scheduledTime = new Date(absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
 
                 db.get("SELECT id FROM contacts WHERE phone = ? AND org_id = ?", [contactPhone, orgId], (errC, row) => {
                     let cId;
@@ -922,10 +936,10 @@ app.get('/api/automations/:id', authenticateToken, (req, res) => {
         `, [id], (errC, phoneRows) => {
             if (errC) return res.status(500).json({ error: errC.message });
             row.contacts = phoneRows.map(p => p.phone);
-            try {
-                // Return parsed message template if possible, else string
-                row.message_template = JSON.parse(row.message_template);
-            } catch (e) {}
+            // jsonb already arrives parsed; only a legacy string needs work.
+            if (typeof row.message_template === 'string') {
+                try { row.message_template = JSON.parse(row.message_template); } catch { /* leave as text */ }
+            }
             res.json(row);
         });
     });
@@ -1021,12 +1035,19 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
                     const adjustedWindowMinutes = (clientEndTime - clientBaseDate) / (1000 * 60);
                     const actualBaseInterval = Math.max(adjustedWindowMinutes / Math.max(contactCount, 1), 1); 
 
+                    const windowStartMs = absoluteBaseDateUTC.getTime();
+                    const windowEndMs = windowStartMs + adjustedWindowMinutes * 60 * 1000;
+                    const clampToWindow = (ms) => new Date(Math.min(Math.max(ms, windowStartMs), windowEndMs));
+
                     let currentTimeOffset = 0;
 
                     contactList.forEach((contactPhone) => {
                         const jitterMs = (Math.random() * 0.6 - 0.3) * actualBaseInterval * 60 * 1000;
+                        // Step after placing, so the first message lands at the
+                        // start of the window rather than one interval into it.
+                        const scheduledTime = clampToWindow(
+                            absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
                         currentTimeOffset += actualBaseInterval;
-                        const scheduledTime = new Date(absoluteBaseDateUTC.getTime() + (currentTimeOffset * 60 * 1000) + jitterMs);
 
                         db.get("SELECT id FROM contacts WHERE phone = ? AND org_id = ?", [contactPhone, orgId], (errC, row) => {
                             let cId;
