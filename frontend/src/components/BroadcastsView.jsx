@@ -365,7 +365,7 @@ function Composer({ open, apiUrl, auth, onClose, onDone, onToast }) {
                                onChange={(e) => setFilter({ ...filter, has_replied: e.target.checked || undefined })} />
                         <span>
                             <strong>Only people who have replied before</strong>
-                            <small>They have messaged you at least once, so the 24-hour window has opened.</small>
+                            <small>They wrote to you first, so replying is expected — much lower ban risk than messaging someone cold.</small>
                         </span>
                     </label>
                     <label className="toggle-row">

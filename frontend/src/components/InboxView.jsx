@@ -18,8 +18,14 @@ import useEvent from '../hooks/useEvent';
  * centred date chips.
  *
  * What WhatsApp Web has no concept of — assignment, internal notes, resolve,
- * labels, canned replies, a service-window state — is expressed in the same
- * idiom instead of bolted on beside it.
+ * labels, canned replies — is expressed in the same idiom instead of bolted on
+ * beside it.
+ *
+ * Note this product links an ORDINARY number through Evolution, not the Meta
+ * Cloud API. The 24-hour customer service window is a Meta construct and does
+ * not apply: an agent can reply whenever they like, exactly as they could from
+ * the phone itself. What is real on an unofficial number is ban risk, so the
+ * composer warns about cold outreach rather than refusing to send.
  *
  * Note this screen previously called three endpoints that were never written:
  * every request 404'd and the component swallowed it, which is why it always
@@ -374,26 +380,18 @@ export default function InboxView({ apiUrl, token, socket, onToast: rawToast }) 
                                 <span>This contact opted out of messages. Automations, the API and this
                                       composer all skip them until they message in again.</span>
                             </div>
-                        ) : !cv.window.open && mode === 'reply' ? (
-                            <>
-                                <div className="composer-closed">
-                                    <Clock size={16} style={{ flex: 'none', marginTop: 1 }} />
-                                    <span>
-                                        <b>Outside the 24-hour window.</b>{' '}
-                                        {cv.window.reason === 'never_messaged'
-                                            ? 'This person has never messaged you, so WhatsApp allows only template messages.'
-                                            : `WhatsApp allows a free-form reply only within 24 hours of their last message${
-                                                cv.last_inbound_at ? ` (${waited(cv.last_inbound_at)} ago)` : ''}. You can still leave an internal note.`}
-                                    </span>
-                                </div>
-                                <div className="composer-mode">
-                                    <button className="note-mode" onClick={() => setMode('note')}>
-                                        <StickyNote size={12} style={{ verticalAlign: -2 }} /> Add an internal note
-                                    </button>
-                                </div>
-                            </>
                         ) : (
                             <>
+                                {cv.outreach?.cold && mode === 'reply' && (
+                                    <div className="composer-caution">
+                                        <AlertTriangle size={15} style={{ flex: 'none', marginTop: 1 }} />
+                                        <span>
+                                            <b>They have never messaged you.</b> Sending first is what gets a
+                                            number reported and banned — this is a linked personal number, not a
+                                            verified business one. Keep it expected and personal.
+                                        </span>
+                                    </div>
+                                )}
                                 <div className="composer-mode">
                                     <button className={mode === 'reply' ? 'active' : ''} onClick={() => setMode('reply')}>
                                         Reply
@@ -475,9 +473,9 @@ function ThreadHeader({ cv, members, labels, typingBy, isMobile, onBack, onAssig
                                 {cv.assignee_name
                                     ? <span>· {cv.assignee_full_name || cv.assignee_name}</span>
                                     : <span>· Unassigned</span>}
-                                {cv.window.open
-                                    ? <span style={{ color: 'var(--success)' }}>· window open</span>
-                                    : <span style={{ color: 'var(--warning)' }}>· window closed</span>}
+                                {cv.outreach?.lastInboundAt
+                                    ? <span>· wrote {waited(cv.outreach.lastInboundAt)} ago</span>
+                                    : <span style={{ color: 'var(--warning)' }}>· never messaged you</span>}
                             </>
                         )}
                     </div>

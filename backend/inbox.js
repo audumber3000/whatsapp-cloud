@@ -35,15 +35,42 @@ const SELECT_CONVERSATION = `
                WHERE cl.conversation_id = cv.id), '[]'::json) AS labels
 `;
 
-/** WhatsApp only allows free-form replies within 24h of the patient's last message. */
-const WINDOW_MS = 24 * 60 * 60 * 1000;
-const windowState = (lastInboundAt) => {
-    if (!lastInboundAt) return { open: false, expiresAt: null, reason: 'never_messaged' };
-    const expires = new Date(lastInboundAt).getTime() + WINDOW_MS;
-    return { open: Date.now() < expires, expiresAt: new Date(expires).toISOString(), reason: null };
+/**
+ * WA Reach is NOT on the Meta Cloud API.
+ *
+ * It links an ordinary WhatsApp number through Evolution, which speaks the
+ * WhatsApp Web protocol — the same one the desktop app uses. That is the whole
+ * reason clinics choose it: no business verification, no template approval, no
+ * per-conversation fee, just scan a QR with the number you already give out.
+ *
+ * So the "24-hour customer service window", where only pre-approved templates
+ * may be sent, DOES NOT APPLY HERE. It is a Meta Cloud API billing and policy
+ * construct. On a linked number an agent can reply whenever they like, exactly
+ * as they could by picking up the phone — and this inbox used to block them
+ * from doing so, which was my mistake and a real obstruction.
+ *
+ * The constraint that IS real on an unofficial number is being banned. Meta
+ * bans numbers that behave like spam: messaging people who never wrote to you,
+ * bursts of identical text, sudden volume on a new number. So the composer
+ * shows *risk*, not permission — and never refuses a reply to someone who
+ * actually messaged in.
+ */
+const RECENT_MS = 24 * 60 * 60 * 1000;
+
+const outreachState = (row) => {
+    const lastIn = row.last_inbound_at ? new Date(row.last_inbound_at).getTime() : null;
+    return {
+        // They wrote first: replying is exactly what they are expecting.
+        invited: !!lastIn,
+        // Nothing inbound at all — anything we send is cold outreach, which is
+        // what actually gets a number reported and banned.
+        cold: !lastIn,
+        recent: !!lastIn && (Date.now() - lastIn) < RECENT_MS,
+        lastInboundAt: row.last_inbound_at || null,
+    };
 };
 
-const decorate = (row) => ({ ...row, window: windowState(row.last_inbound_at) });
+const decorate = (row) => ({ ...row, outreach: outreachState(row) });
 
 function router({ authenticateToken, requireRole }) {
     const r = express.Router();
@@ -219,14 +246,9 @@ function router({ authenticateToken, requireRole }) {
             // The same hard stop the automations and the public API honour.
             if (contact?.opted_out) return res.status(403).json({ error: 'This contact has opted out of messages' });
 
-            const win = windowState(cv.last_inbound_at);
-            if (!win.open) {
-                return res.status(409).json({
-                    error: 'Outside the 24-hour window',
-                    detail: 'WhatsApp only allows a free-form reply within 24 hours of the customer\'s last message.',
-                    window: win,
-                });
-            }
+            // Deliberately no window check. See the note at the top of this
+            // file: that rule belongs to the Meta Cloud API, not to a linked
+            // number, and enforcing it here only stopped agents doing their job.
 
             // Separate "the number is unlinked" from "the send failed", because
             // sendMessage returns false for both and they need different fixes.
@@ -445,4 +467,4 @@ function configRouter({ authenticateToken, requireRole }) {
     return r;
 }
 
-module.exports = { router, configRouter, windowState };
+module.exports = { router, configRouter, outreachState };
