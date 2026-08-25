@@ -74,13 +74,76 @@ async function saveInboundMedia(instance, msg) {
     }
 }
 
+
+/* ── away message ─────────────────────────────────────────────────────────── */
+
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/**
+ * Is the clinic open right now, in its own timezone?
+ *
+ * Read in the org's zone rather than the server's: a box in UTC would put a
+ * Mumbai clinic's 9:30am opening at 4am and auto-reply to every morning
+ * message as though nobody were there.
+ */
+function isOpenNow(hours, timezone) {
+    if (!hours || typeof hours !== 'object') return true;   // unset means always open
+    try {
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: timezone || 'Asia/Kolkata',
+            weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(new Date());
+        const get = (t) => parts.find((p) => p.type === t)?.value || '';
+        const day = DAY_KEYS[['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'))];
+        const win = hours[day];
+        if (!win || !win.open || !win.close) return false;   // closed today
+        const now = `${get('hour').padStart(2, '0')}:${get('minute')}`;
+        return now >= win.open && now < win.close;
+    } catch (e) {
+        // A bad timezone must not silently turn the clinic "closed" and start
+        // auto-replying to everyone.
+        console.error('[away] could not read business hours:', e.message);
+        return true;
+    }
+}
+
+/**
+ * Reply once per conversation per day, not once per message — a patient
+ * sending three lines should not get three identical auto-replies.
+ */
+async function maybeSendAway(orgId, conversation, phone) {
+    if (!conversation) return;
+    try {
+        const org = await dbGet(
+            'SELECT away_enabled, away_message, business_hours, timezone FROM organisations WHERE id = ?',
+            [orgId]);
+        if (!org?.away_enabled || !org.away_message) return;
+        if (isOpenNow(org.business_hours, org.timezone)) return;
+
+        const fresh = await dbGet(
+            `SELECT away_sent_at FROM conversations WHERE id = ?`, [conversation.id]);
+        if (fresh?.away_sent_at && (Date.now() - new Date(fresh.away_sent_at).getTime()) < 24 * 60 * 60 * 1000) return;
+
+        const sent = await hooks.sendAway(orgId, phone, org.away_message);
+        if (sent) {
+            await dbRun('UPDATE conversations SET away_sent_at = NOW() WHERE id = ?', [conversation.id]);
+        }
+    } catch (e) {
+        console.error('[away] failed:', e.message);
+    }
+}
+
 /* ── main handler ─────────────────────────────────────────────────────────── */
 
 let notify = () => {};
 let emitInbound = () => {};
-function wire({ notifyUser, emit }) {
+// whatsapp.js requires this module, so the sender is injected rather than
+// required back — otherwise the two would form a cycle.
+const hooks = { sendAway: async () => false };
+function wire({ notifyUser, emit, sendAway }) {
     if (notifyUser) notify = notifyUser;
     if (emit) emitInbound = emit;
+    if (sendAway) hooks.sendAway = sendAway;
 }
 
 async function handle(userId, instance, msg) {
@@ -170,6 +233,9 @@ async function handle(userId, instance, msg) {
         ).catch((e) => { console.error('[inbound] conversation upsert failed:', e.message); return null; });
     }
 
+    // Outside business hours, say so rather than leaving them wondering.
+    await maybeSendAway(userId, conversation, msg.from);
+
     emitInbound(userId, {
         conversation_id: conversation?.id || null,
         contact_id: contact?.id || null,
@@ -186,4 +252,4 @@ async function handle(userId, instance, msg) {
         .catch(() => {});
 }
 
-module.exports = { handle, wire, detectIntent };
+module.exports = { handle, wire, detectIntent, isOpenNow };

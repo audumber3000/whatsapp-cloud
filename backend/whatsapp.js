@@ -280,6 +280,7 @@ const notifyUser = (userId, type, message) => {
 // Inbound replies land here. Wired once, at module load.
 inbound.wire({
     notifyUser: (uid, type, message) => notifyUser(uid, type, message),
+    sendAway: async (orgId, phone, text) => sendMessage(orgId, phone, text),
     emit: (uid, payload) => {
         if (!io) return;
         // Everyone sharing the number sees the reply land, not just whoever

@@ -142,10 +142,26 @@ app.use('/api/templates', require('./templates').router({ authenticateToken, req
 app.use('/api/broadcasts', require('./broadcasts').router({ authenticateToken, requireRole: auth.requireRole }));
 app.use('/api/analytics', require('./analytics').router({ authenticateToken }));
 
+// Workspace settings: the org itself, its team, its keys and its audit trail.
+// Mounted after the legacy GET/PUT /api/settings above, which it supersedes —
+// those two exact-path routes still answer for anything not yet migrated.
+app.use('/api/settings', require('./settings').router({ authenticateToken, requireRole: auth.requireRole }));
+// Invitation acceptance is deliberately outside the authenticated router: the
+// person accepting has no account in this workspace yet.
+app.use('/api/invitations', require('./settings').acceptRouter({ throttleAuth }));
+
 // --- Auth Endpoints ---
 app.post('/api/signup', throttleAuth, async (req, res) => {
     try {
         const { username, password } = req.body;
+        // The signup form has always sent an email and this route has always
+        // dropped it, so every account created so far has users.email NULL —
+        // which silently breaks password reset, invitation matching and every
+        // notification that is supposed to reach a person rather than an org.
+        const signupEmail = String(req.body?.email || '').trim().toLowerCase() || null;
+        if (signupEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(signupEmail)) {
+            return res.status(400).json({ error: 'That does not look like an email address' });
+        }
         const hashedPassword = await bcrypt.hash(password, 10);
 
         // Signing up creates a workspace and makes you its owner — everything
@@ -158,13 +174,20 @@ app.post('/api/signup', throttleAuth, async (req, res) => {
             const created = await db.tx(async (t) => {
                 const existing = await t.one('SELECT id FROM users WHERE username = ?', [username]);
                 if (existing) return null;
-                const u = await t.one('INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id', [username, hashedPassword]);
+                if (signupEmail) {
+                    const taken = await t.one('SELECT id FROM users WHERE lower(email) = ?', [signupEmail]);
+                    if (taken) return 'email-taken';
+                }
+                const u = await t.one(
+                    'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?) RETURNING id',
+                    [username, signupEmail, hashedPassword]);
                 const o = await t.one('INSERT INTO organisations (name, slug) VALUES (?, ?) RETURNING id',
                     [username, `${slugBase}-${Date.now().toString(36)}`]);
                 await t.query('INSERT INTO memberships (org_id, user_id, role) VALUES (?, ?, \'owner\')', [o.id, u.id]);
                 await t.query('INSERT INTO wa_instances (org_id, instance_name) VALUES (?, ?)', [o.id, `wareach_org_${o.id}`]);
                 return { userId: u.id, orgId: o.id };
             });
+            if (created === 'email-taken') return res.status(409).json({ error: 'That email is already in use' });
             if (!created) return res.status(400).json({ error: 'Username already exists' });
             // Register the new instance in the resolver cache, or the first send
             // would look up a name that is not there yet.
