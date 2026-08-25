@@ -322,9 +322,9 @@ cron.schedule('* * * * *', () => {
             
             db.get(`
                 SELECT 
-                    SUM(CASE WHEN status IN ('delivered', 'read', 'sent') THEN 1 ELSE 0 END) as sentCount,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failedCount,
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingCount,
+                    SUM(CASE WHEN status IN ('delivered', 'read', 'sent') THEN 1 ELSE 0 END)::int as sentCount,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)::int as failedCount,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)::int as pendingCount,
                     MIN(sent_time) as firstSentTime
                 FROM automation_logs 
                 WHERE automation_id = ? AND sent_time >= ? AND sent_time <= ?

@@ -14,7 +14,20 @@
  * New code should prefer the promise API: query(), one(), many().
  */
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+/**
+ * int8 (OID 20) arrives as a STRING by default, because bigint can exceed
+ * Number.MAX_SAFE_INTEGER. Every COUNT(*) in this codebase is an int8, and
+ * SQLite returned numbers — so `confirmed + reschedule + cancelled` silently
+ * became string concatenation the moment we moved: 0 + 0 + 1 rendered as
+ * "001", and a response rate computed from it was nonsense.
+ *
+ * Counts and the `automation_logs.id` sequence here are bounded far below 2^53,
+ * so parsing them as numbers is safe and restores the behaviour every call site
+ * was written against.
+ */
+types.setTypeParser(types.builtins.INT8, (v) => (v === null ? null : parseInt(v, 10)));
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,

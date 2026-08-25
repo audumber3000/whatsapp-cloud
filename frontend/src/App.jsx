@@ -25,6 +25,29 @@ import {
 } from 'recharts';
 
 const API_URL = '/api';
+
+/**
+ * The navigation, as data.
+ *
+ * Three tiers share it: desktop shows icon + label, tablet collapses to an
+ * icon rail (the `.nav-label` spans drop out), mobile slides the whole panel
+ * in over a backdrop. It was previously eight hand-written <button> blocks,
+ * which is how a find-replace once injected `setSidebarOpen` into components
+ * that never had it.
+ */
+const NAV = [
+  { section: 'Overview' },
+  { tab: 'dashboard',   label: 'Dashboard',     Icon: LayoutDashboard },
+  { tab: 'inbox',       label: 'Inbox',         Icon: Inbox },
+  { section: 'Messaging' },
+  { tab: 'automations', label: 'Automations',   Icon: Zap },
+  { tab: 'contacts',    label: 'Contacts',      Icon: Users },
+  { tab: 'logs',        label: 'Activity Logs', Icon: Activity },
+  { section: 'Settings & Help' },
+  { tab: 'settings',    label: 'Settings',      Icon: Settings },
+];
+
+
 const SOCKET_URL = window.location.origin;
 
 // Helper to get local timezone and region info
@@ -275,84 +298,50 @@ function MainApp() {
 
       {/* Sidebar */}
       <div className={`sidebar-backdrop${sidebarOpen ? ' show' : ''}`} onClick={() => setSidebarOpen(false)} />
-      <div className={`sidebar${sidebarOpen ? ' open' : ''}`}>
+      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`} id="app-sidebar">
         <div className="sidebar-logo">
           <Logo size={22} showText={false} />
-          WA Reach
+          <span className="nav-label">WA Reach</span>
         </div>
 
         <nav className="nav-menu" aria-label="Main">
-          <div className="nav-section">Overview</div>
-          <button
-            type="button"
-            className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('dashboard')}
-            aria-current={activeTab === 'dashboard' ? 'page' : undefined}
-          >
-            <LayoutDashboard size={19} />
-            Dashboard
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`}
-            onClick={() => { setSidebarOpen(false); setUnread(0); setActiveTab('inbox'); }}
-            aria-current={activeTab === 'inbox' ? 'page' : undefined}
-          >
-            <Inbox size={19} />
-            Inbox
-            {unread > 0 && <span className="inbox-unread" style={{ marginLeft: 'auto' }}>{unread}</span>}
-          </button>
-
-          <div className="nav-section">Messaging</div>
-          <button
-            type="button"
-            className={`nav-item ${activeTab === 'automations' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('automations')}
-            aria-current={activeTab === 'automations' ? 'page' : undefined}
-          >
-            <Zap size={19} />
-            Automations
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${activeTab === 'contacts' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('contacts')}
-            aria-current={activeTab === 'contacts' ? 'page' : undefined}
-          >
-            <Users size={19} />
-            Contacts
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setSidebarOpen(false) || setActiveTab('logs')}
-            aria-current={activeTab === 'logs' ? 'page' : undefined}
-          >
-            <Activity size={19} />
-            Activity Logs
-          </button>
-
-          <div className="nav-section">Settings &amp; Help</div>
-          <button
-             type="button"
-             className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-             onClick={() => setSidebarOpen(false) || setActiveTab('settings')}
-             aria-current={activeTab === 'settings' ? 'page' : undefined}
-          >
-            <Settings size={19} />
-            Settings
-          </button>
+          {NAV.map((item) => item.section ? (
+            <div className="nav-section" key={item.section}>{item.section}</div>
+          ) : (
+            <button
+              key={item.tab}
+              type="button"
+              title={item.label}
+              className={`nav-item ${activeTab === item.tab ? 'active' : ''}`}
+              onClick={() => {
+                setSidebarOpen(false);
+                if (item.tab === 'inbox') setUnread(0);
+                setActiveTab(item.tab);
+              }}
+              aria-current={activeTab === item.tab ? 'page' : undefined}
+            >
+              <item.Icon size={19} aria-hidden="true" />
+              <span className="nav-label">{item.label}</span>
+              {item.tab === 'inbox' && unread > 0 && (
+                <span className="inbox-unread nav-badge">{unread}</span>
+              )}
+            </button>
+          ))}
         </nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-footer-title">Status: {isLinked ? 'Connected' : 'Disconnected'}</div>
+          <div className="sidebar-footer-title" title={isLinked ? 'WhatsApp connected' : 'WhatsApp disconnected'}>
+            <span className={`conn-dot${isLinked ? ' on' : ''}`} aria-hidden="true" />
+            <span className="nav-label">{isLinked ? 'Connected' : 'Disconnected'}</span>
+          </div>
           {isLinked && (
-            <button onClick={handleWADisconnect} style={{ marginTop: '8px', width: '100%', padding: '6px', background: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', borderRadius: 'var(--r-md)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px' }}>
-              <Link2Off size={14} /> Disconnect
+            <button className="sidebar-disconnect" onClick={handleWADisconnect} title="Disconnect WhatsApp">
+              <Link2Off size={14} aria-hidden="true" />
+              <span className="nav-label">Disconnect</span>
             </button>
           )}
         </div>
-      </div>
+      </aside>
 
       {/* Main Content */}
       <div className="main-wrapper">
@@ -1144,7 +1133,7 @@ function LogsView({ token }) {
   const [logs, setLogs] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1, limit: 15 });
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('delivered');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState([]);
 
@@ -1187,8 +1176,8 @@ function LogsView({ token }) {
 
   return (
     <div className="view-container">
-      <div className="card full-width" style={{ display: 'flex', flexDirection: 'column', minHeight: '500px' }}>
-        <div className="card-header" style={{ flexWrap: 'wrap', gap: '16px' }}>
+      <div className="card full-width" style={{ display: 'flex', flexDirection: 'column', padding: 0 }}>
+        <div className="card-header" style={{ flexWrap: 'wrap', gap: '12px', padding: '13px 14px 11px', marginBottom: 0 }}>
           <div className="card-title-group">
             <h3>Messaging Activity</h3>
             <p className="card-desc">Detailed logs of all inbound and outbound messages.</p>
@@ -1215,8 +1204,8 @@ function LogsView({ token }) {
           </div>
         </div>
 
-        <div style={{ flexGrow: 1, overflowX: 'auto' }}>
-          <table className="logs-table">
+        <div className="tablewrap" style={{ flexGrow: 1, border: 0, borderRadius: 0 }}>
+          <table className="logs-table table-stack">
             <thead>
               <tr>
                 <th style={{ width: '40px' }}></th>
@@ -1229,29 +1218,29 @@ function LogsView({ token }) {
             </thead>
             <tbody>
               {currentData.length === 0 && !loading ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No logs found.</td></tr>
+                <tr className="plain"><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No logs found.</td></tr>
               ) : null}
               {currentData.map((log, idx) => {
                 const isExpanded = expandedLogs.includes(log.id);
                 return (
                   <React.Fragment key={`${log.id}-${idx}`}>
                     <tr onClick={() => log.content && toggleExpand(log.id)} style={{ cursor: log.content ? 'pointer' : 'default' }}>
-                      <td>
+                      <td className="stack-check">
                         {log.content && (
                           <div style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
                             <ChevronRight size={16} />
                           </div>
                         )}
                       </td>
-                      <td className="log-contact">{log.contact}</td>
-                      <td className="log-flow">{log.workflow || 'Manual API'}</td>
-                      <td>
+                      <td className="log-contact stack-title">{log.contact}</td>
+                      <td className="log-flow" data-label="Workflow">{log.workflow || 'Manual API'}</td>
+                      <td data-label="Status">
                         <span className={`badge badge-${log.status}`}>
                           {log.status}
                         </span>
                         {log.error_reason && <span style={{ display: 'block', fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>{log.error_reason}</span>}
                       </td>
-                      <td>
+                      <td data-label="Reply">
                         {log.response ? (
                           <span className={`badge badge-${log.response === 'confirm' ? 'delivered' : log.response === 'cancel' ? 'failed' : 'pending'}`}>
                             {log.response === 'confirm' ? 'Confirmed'
@@ -1267,11 +1256,11 @@ function LogsView({ token }) {
                           </span>
                         )}
                       </td>
-                      <td className="log-time">{new Date(log.sent_time).toLocaleString()}</td>
+                      <td className="log-time" data-label="Target time">{new Date(log.sent_time).toLocaleString()}</td>
                     </tr>
                     {isExpanded && log.content && (
-                      <tr className="expanded-row">
-                        <td></td>
+                      <tr className="expanded-row plain">
+                        <td className="stack-hide"></td>
                         <td colSpan={5} style={{ padding: '0 16px 16px' }}>
                           <div style={{ background: 'var(--surface-raised)', padding: '12px', borderRadius: 'var(--r-md)', fontSize: '13px', color: 'var(--text)', borderLeft: '4px solid var(--brand)', whiteSpace: 'pre-wrap' }}>
                              {log.content}
@@ -1445,8 +1434,8 @@ function SettingsView({ token }) {
                </div>
              </form>
            ) : (
-             <div style={{ padding: '24px', overflowX: 'auto' }}>
-                <table className="logs-table">
+             <div className="tablewrap" style={{ margin: 24, border: 0 }}>
+                <table className="logs-table table-stack">
                    <thead>
                       <tr>
                          <th>Type</th>
@@ -1458,17 +1447,17 @@ function SettingsView({ token }) {
                    </thead>
                    <tbody>
                       {notifLogs.length === 0 ? (
-                         <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No notification history yet.</td></tr>
+                         <tr className="plain"><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: '40px' }}>No notification history yet.</td></tr>
                       ) : (
                          notifLogs.map(log => (
                             <tr key={log.id}>
-                               <td style={{ textTransform: 'capitalize' }}>{log.type}</td>
-                               <td style={{ fontSize: '13px' }}>
+                               <td className="stack-title" style={{ textTransform: 'capitalize' }}>{log.type}</td>
+                               <td data-label="Event" style={{ fontSize: '13px' }}>
                                   {log.category === 'start_alert' ? '🚀 Startup Alert' : '🏁 Daily Summary'}
                                </td>
-                               <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{log.recipient}</td>
-                               <td style={{ fontSize: '12px' }}>{new Date(log.sent_at).toLocaleString()}</td>
-                               <td>
+                               <td data-label="Recipient" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{log.recipient}</td>
+                               <td data-label="Time" style={{ fontSize: '12px' }}>{new Date(log.sent_at).toLocaleString()}</td>
+                               <td data-label="Status">
                                   <span className={`badge badge-${log.status}`}>
                                      {log.status}
                                   </span>
@@ -1591,22 +1580,22 @@ function ClinicDashboard({ ssoToken }) {
         {/* Message log */}
         <div style={{ ...card, padding: 0 }}>
           <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--text)' }}>Recent messages</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="logs-table">
+          <div className="tablewrap" style={{ border: 0, borderRadius: 0 }}>
+            <table className="logs-table table-stack">
               <thead>
                 <tr><th>To</th><th>Message</th><th>Status</th><th>Time</th></tr>
               </thead>
               <tbody>
                 {messages.length === 0 ? (
-                  <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: 40 }}>No messages yet.</td></tr>
+                  <tr className="plain"><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-faint)', padding: 40 }}>No messages yet.</td></tr>
                 ) : messages.map(m => (
                   <tr key={m.id}>
-                    <td>+{m.to_number}</td>
-                    <td style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <td className="stack-title">+{m.to_number}</td>
+                    <td data-label="Message" style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {m.has_media ? '📎 ' : ''}{m.body || (m.has_media ? '[attachment]' : '')}
                     </td>
-                    <td><span className={`badge badge-${m.status}`}>{m.status}</span></td>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(m.created_at).toLocaleString()}</td>
+                    <td data-label="Status"><span className={`badge badge-${m.status}`}>{m.status}</span></td>
+                    <td data-label="Time" style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(m.created_at).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>

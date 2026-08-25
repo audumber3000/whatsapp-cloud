@@ -429,10 +429,10 @@ app.get('/api/dashboard/responses', authenticateToken, (req, res) => {
     })();
     db.all(`
         SELECT
-          SUM(CASE WHEN al.response = 'confirm'    THEN 1 ELSE 0 END) AS confirmed,
-          SUM(CASE WHEN al.response = 'reschedule' THEN 1 ELSE 0 END) AS reschedule,
-          SUM(CASE WHEN al.response = 'cancel'     THEN 1 ELSE 0 END) AS cancelled,
-          SUM(CASE WHEN al.response IS NULL        THEN 1 ELSE 0 END) AS no_reply,
+          SUM(CASE WHEN al.response = 'confirm'    THEN 1 ELSE 0 END)::int AS confirmed,
+          SUM(CASE WHEN al.response = 'reschedule' THEN 1 ELSE 0 END)::int AS reschedule,
+          SUM(CASE WHEN al.response = 'cancel'     THEN 1 ELSE 0 END)::int AS cancelled,
+          SUM(CASE WHEN al.response IS NULL        THEN 1 ELSE 0 END)::int AS no_reply,
           COUNT(*) AS total
         FROM automation_logs al
         JOIN automations a ON a.id = al.automation_id

@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Search, Plus, Upload, Download, ShieldCheck, Ban, Trash2, Tag as TagIcon,
-    ChevronUp, ChevronDown, Users, AlertCircle, X,
+    ChevronUp, ChevronDown, Users, AlertCircle, X, MoreHorizontal,
 } from 'lucide-react';
 import Modal from './ui/Modal';
+import Dropdown, { DropdownItem } from './ui/Dropdown';
+import { useIsMobile } from '../hooks/useMediaQuery';
 import ContactDrawer from './ContactDrawer';
 import { useConfirm } from './ui/ConfirmDialog';
 
@@ -30,6 +32,7 @@ export default function ContactsView({ apiUrl, token, onToast }) {
     const [importOpen, setImportOpen] = useState(false);
     const [checking, setChecking] = useState(false);
     const confirm = useConfirm();
+    const isMobile = useIsMobile();
 
     const auth = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
@@ -135,7 +138,7 @@ export default function ContactsView({ apiUrl, token, onToast }) {
     return (
         <div className="view-container">
             <div className="card" style={{ padding: 0 }}>
-                <div className="card-header" style={{ padding: '18px 18px 14px', marginBottom: 0 }}>
+                <div className="card-header" style={{ padding: '13px 14px 11px', marginBottom: 0 }}>
                     {/* The page header already reads "Contacts", so this line
                         carries the count and what the current filter is showing
                         rather than repeating the title. */}
@@ -169,12 +172,34 @@ export default function ContactsView({ apiUrl, token, onToast }) {
                                 {tags.map((t) => <option key={t.id} value={t.name}>{t.name} ({t.contact_count})</option>)}
                             </select>
                         )}
-                        <button className="btn-outline btn-sm" onClick={checkNumbers} disabled={checking}>
-                            <ShieldCheck size={14} /> {checking ? 'Checking…' : 'Check numbers'}
-                        </button>
-                        <button className="btn-outline btn-sm" onClick={exportCsv}><Download size={14} /> Export</button>
-                        <button className="btn-outline btn-sm" onClick={() => setImportOpen(true)}><Upload size={14} /> Import</button>
-                        <button className="btn-primary btn-sm" onClick={() => setAddOpen(true)}><Plus size={14} /> Add</button>
+                        {/* Six buttons is a five-row stack on a phone. There, the
+                            three occasional actions fold into an overflow menu and
+                            only Add stays in reach of a thumb. */}
+                        {isMobile ? (
+                            <>
+                                <Dropdown align="left" width={210} trigger={
+                                    <span className="btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}>
+                                        <MoreHorizontal size={15} /> More
+                                    </span>
+                                }>
+                                    <DropdownItem icon={<ShieldCheck size={15} />} onClick={checkNumbers}>
+                                        {checking ? 'Checking…' : 'Check numbers'}
+                                    </DropdownItem>
+                                    <DropdownItem icon={<Download size={15} />} onClick={exportCsv}>Export CSV</DropdownItem>
+                                    <DropdownItem icon={<Upload size={15} />} onClick={() => setImportOpen(true)}>Import</DropdownItem>
+                                </Dropdown>
+                                <button className="btn-primary btn-sm" onClick={() => setAddOpen(true)}><Plus size={14} /> Add</button>
+                            </>
+                        ) : (
+                            <>
+                                <button className="btn-outline btn-sm" onClick={checkNumbers} disabled={checking}>
+                                    <ShieldCheck size={14} /> {checking ? 'Checking…' : 'Check numbers'}
+                                </button>
+                                <button className="btn-outline btn-sm" onClick={exportCsv}><Download size={14} /> Export</button>
+                                <button className="btn-outline btn-sm" onClick={() => setImportOpen(true)}><Upload size={14} /> Import</button>
+                                <button className="btn-primary btn-sm" onClick={() => setAddOpen(true)}><Plus size={14} /> Add</button>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -205,7 +230,7 @@ export default function ContactsView({ apiUrl, token, onToast }) {
                 )}
 
                 <div className="tablewrap" style={{ border: 0, borderRadius: 0 }}>
-                    <table className="logs-table">
+                    <table className="logs-table table-stack">
                         <thead>
                             <tr>
                                 <th style={{ width: 38 }}>
@@ -221,9 +246,9 @@ export default function ContactsView({ apiUrl, token, onToast }) {
                         </thead>
                         <tbody>
                             {loading ? (
-                                <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                                <tr className="plain"><td colSpan={6} style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
                             ) : rows.length === 0 ? (
-                                <tr><td colSpan={6}>
+                                <tr className="plain"><td colSpan={6}>
                                     <div className="empty-state">
                                         <div className="empty-art"><Users size={28} strokeWidth={1.5} /></div>
                                         <h4>{debounced || tagFilter || filter !== 'all' ? 'Nothing matches' : 'No contacts yet'}</h4>
@@ -239,30 +264,32 @@ export default function ContactsView({ apiUrl, token, onToast }) {
                                 </td></tr>
                             ) : rows.map((c) => (
                                 <tr key={c.id} onClick={() => setOpenId(c.id)} style={{ cursor: 'pointer' }}>
-                                    <td onClick={(e) => e.stopPropagation()}>
+                                    <td className="stack-check" onClick={(e) => e.stopPropagation()}>
                                         <input type="checkbox" checked={selected.has(c.id)}
                                                onChange={() => toggleOne(c.id)}
                                                aria-label={`Select ${c.name || c.phone}`} />
                                     </td>
-                                    <td className="log-contact">{c.name || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
-                                    <td>+{c.phone}</td>
-                                    <td>
-                                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                                            {(c.tags || []).map((t) => (
-                                                <span key={t.id} className="tag-chip"
-                                                      style={{ background: t.colour, borderColor: t.colour, color: '#fff' }}>
-                                                    {t.name}
-                                                </span>
-                                            ))}
-                                        </div>
+                                    <td className="log-contact stack-title">{c.name || <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
+                                    <td data-label="Phone">+{c.phone}</td>
+                                    <td data-label="Tags">
+                                        {c.tags?.length > 0 && (
+                                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                                                {c.tags.map((t) => (
+                                                    <span key={t.id} className="tag-chip"
+                                                          style={{ background: t.colour, borderColor: t.colour, color: '#fff' }}>
+                                                        {t.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </td>
-                                    <td className="log-time">
+                                    <td className="log-time" data-label="Last contacted">
                                         {c.last_contacted_at ? new Date(c.last_contacted_at).toLocaleDateString() : '—'}
                                     </td>
-                                    <td>
-                                        {c.opted_out && <span className="badge badge-failed"><Ban size={11} /> Opted out</span>}
+                                    <td data-label="Status">
+                                        {c.opted_out && <span className="badge badge-failed badge-prose"><Ban size={11} /> Opted out</span>}
                                         {!c.opted_out && c.wa_valid === false && (
-                                            <span className="badge badge-pending"><AlertCircle size={11} /> Not on WA</span>
+                                            <span className="badge badge-pending badge-prose"><AlertCircle size={11} /> Not on WA</span>
                                         )}
                                     </td>
                                 </tr>
