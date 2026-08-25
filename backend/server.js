@@ -125,6 +125,12 @@ const auth = require('./auth');
 // Account management: profile, password change, reset, sessions, refresh.
 app.use('/api/account', require('./authRoutes').router({ authenticateToken, throttleAuth }));
 
+// Contacts CRM: list with pagination/sort/filter, detail, timeline, notes,
+// tags, bulk actions, import and export.
+app.use('/api/contacts', require('./contacts').router({ authenticateToken, requireRole: auth.requireRole }));
+// Org-level configuration the contact record depends on.
+app.use('/api', require('./tags').router({ authenticateToken, requireRole: auth.requireRole }));
+
 // --- Auth Endpoints ---
 app.post('/api/signup', throttleAuth, async (req, res) => {
     try {
@@ -370,203 +376,11 @@ app.post('/api/wa/disconnect', authenticateToken, async (req, res) => {
 });
 
 // Get all contacts (optional ?search= over name/phone)
-app.get('/api/contacts', authenticateToken, (req, res) => {
-    const search = (req.query.search || '').trim();
-    let sql = 'SELECT * FROM contacts WHERE org_id = ?';
-    const params = [req.user.org_id];
-    if (search) {
-        sql += ' AND (name LIKE ? OR phone LIKE ?)';
-        params.push(`%${search}%`, `%${search}%`);
-    }
-    sql += ' ORDER BY lower(name) ASC';
-    db.all(sql, params, (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
-    });
-});
+// ── Contacts ────────────────────────────────────────────────────────────────
+// The CRUD, list, import, notes, tags and timeline routes moved to
+// contacts.js. What stays here are the two that reach into the WhatsApp layer:
+// /validate (asks Evolution which numbers exist) and /:id/optout.
 
-const cleanPhone = (p) => String(p || '').replace(/[^\d]/g, '');
-
-// Add a contact
-app.post('/api/contacts', authenticateToken, (req, res) => {
-    const name = (req.body.name || '').trim();
-    const phone = cleanPhone(req.body.phone);
-    if (!phone) return res.status(400).json({ error: 'A valid phone number is required' });
-    db.run('INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?)', [req.user.org_id, name, phone], function (err) {
-        if (err) {
-            if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Contact already exists for this user' });
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ id: this.lastID, name, phone });
-    });
-});
-
-// Edit a contact
-app.put('/api/contacts/:id', authenticateToken, (req, res) => {
-    const name = (req.body.name || '').trim();
-    const phone = cleanPhone(req.body.phone);
-    if (!phone) return res.status(400).json({ error: 'A valid phone number is required' });
-    db.run('UPDATE contacts SET name = ?, phone = ? WHERE id = ? AND org_id = ?',
-        [name, phone, req.params.id, req.user.org_id], function (err) {
-            if (err) {
-                if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Another contact already uses this number' });
-                return res.status(500).json({ error: err.message });
-            }
-            if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
-            res.json({ id: Number(req.params.id), name, phone });
-        });
-});
-
-// Delete a contact
-app.delete('/api/contacts/:id', authenticateToken, (req, res) => {
-    db.run('DELETE FROM contacts WHERE id = ? AND org_id = ?', [req.params.id, req.user.org_id], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Contact not found' });
-        res.json({ message: 'Deleted' });
-    });
-});
-
-// Bulk import contacts. Accepts { contacts: [{name, phone}] }.
-app.post('/api/contacts/bulk', authenticateToken, (req, res) => {
-    const list = Array.isArray(req.body.contacts) ? req.body.contacts : [];
-    if (list.length === 0) return res.status(400).json({ error: 'No contacts provided' });
-
-    let added = 0, skipped = 0, processed = 0;
-    const done = () => { if (++processed === list.length) res.json({ added, skipped }); };
-    list.forEach((c) => {
-        const phone = cleanPhone(c.phone);
-        const name = (c.name || '').trim();
-        if (!phone) { skipped++; return done(); }
-        db.run('INSERT INTO contacts (org_id, name, phone) VALUES (?, ?, ?) ON CONFLICT (org_id, phone) DO NOTHING',
-            [req.user.org_id, name, phone], function (err) {
-                if (!err && this.changes > 0) added++; else skipped++;
-                done();
-            });
-    });
-});
-
-// Get reminders
-app.get('/api/reminders', authenticateToken, (req, res) => {
-    db.all(`
-    SELECT reminders.*, contacts.name, contacts.phone 
-    FROM reminders 
-    LEFT JOIN contacts ON reminders.contact_id = contacts.id
-    WHERE reminders.org_id = ?
-    ORDER BY scheduled_time ASC
-  `, [req.user.org_id], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
-    });
-});
-
-// Add a reminder
-app.post('/api/reminders', authenticateToken, (req, res) => {
-    const { contact_id, message, scheduled_time, media_id } = req.body;
-    // Ensure contact exists for this user
-    db.get('SELECT id FROM contacts WHERE id = ? AND org_id = ?', [contact_id, req.user.org_id], (errC, row) => {
-        if (errC || !row) return res.status(400).json({ error: 'Invalid contact' });
-
-        const insert = () => {
-            db.run(`INSERT INTO reminders (org_id, contact_id, message, scheduled_time, status, media_id) VALUES (?, ?, ?, ?, 'pending', ?)`,
-                [req.user.org_id, contact_id, message, scheduled_time, media_id || null],
-                function (err) {
-                    if (err) return res.status(500).json({ error: 'Could not create reminder' });
-                    res.json({ id: this.lastID, contact_id, message, scheduled_time, status: 'pending', media_id: media_id || null });
-                });
-        };
-
-        // media_id comes from the client and used to be inserted unchecked,
-        // letting a reminder point at another tenant's attachment — which the
-        // scheduler would then read and send out over WhatsApp.
-        if (!media_id) return insert();
-        db.get('SELECT id FROM media_attachments WHERE id = ? AND org_id = ?',
-            [media_id, req.user.org_id], (eM, mRow) => {
-                if (eM || !mRow) return res.status(400).json({ error: 'Unknown attachment' });
-                insert();
-            });
-    });
-});
-
-// --- Inbox (two-way messaging) ---
-// Nothing read inbound messages before Evolution; these expose what now lands.
-
-// Conversation list: one row per contact, newest first, with unread counts.
-app.get('/api/inbox', authenticateToken, (req, res) => {
-    // One row per conversation. Rewritten for Postgres, which (correctly)
-    // rejects selecting columns that are neither grouped nor aggregated —
-    // SQLite silently picked an arbitrary row. DISTINCT ON gives the newest
-    // message per number deterministically, and the aggregates are joined on.
-    db.all(`
-        WITH latest AS (
-            SELECT DISTINCT ON (im.from_number)
-                   im.from_number, im.contact_id, im.body AS last_body,
-                   im.intent AS last_intent, im.received_at AS last_at
-              FROM inbound_messages im
-             WHERE im.org_id = ?
-             ORDER BY im.from_number, im.received_at DESC
-        ),
-        totals AS (
-            SELECT from_number,
-                   COUNT(*)::int AS total,
-                   COUNT(*) FILTER (WHERE is_read = FALSE)::int AS unread
-              FROM inbound_messages
-             WHERE org_id = ?
-             GROUP BY from_number
-        )
-        SELECT l.contact_id,
-               COALESCE(c.name, 'Unknown') AS name,
-               l.from_number, l.last_body, l.last_intent, l.last_at,
-               t.total, t.unread,
-               COALESCE(c.opted_out, FALSE) AS opted_out
-          FROM latest l
-          JOIN totals t ON t.from_number = l.from_number
-          LEFT JOIN contacts c ON c.id = l.contact_id
-         ORDER BY l.last_at DESC
-         LIMIT 100
-    `, [req.user.org_id, req.user.org_id], (err, rows) => {
-        if (err) return res.status(500).json({ error: 'Could not load conversations' });
-        res.json(rows || []);
-    });
-});
-
-// Full thread with one contact: what they sent us, and what we sent them.
-app.get('/api/inbox/:number', authenticateToken, (req, res) => {
-    const num = String(req.params.number).replace(/\D/g, '');
-    db.all(
-        `SELECT id, body, media_type, media_path, intent, received_at, 'in' AS direction
-           FROM inbound_messages WHERE org_id = ? AND from_number = ?
-         UNION ALL
-         SELECT al.id, al.content AS body, NULL, NULL,
-                al.response AS intent, al.sent_time AS received_at, 'out' AS direction
-           FROM automation_logs al
-           JOIN contacts c ON c.id = al.contact_id
-          WHERE c.org_id = ? AND c.phone = ? AND al.status IN ('delivered','sent','read','failed')
-         ORDER BY received_at ASC LIMIT 200`,
-        [req.user.org_id, num, req.user.org_id, num],
-        (err, rows) => {
-            if (err) return res.status(500).json({ error: err.message });
-            db.run('UPDATE inbound_messages SET is_read = TRUE WHERE org_id = ? AND from_number = ?',
-                [req.user.org_id, num]);
-            res.json(rows || []);
-        }
-    );
-});
-
-// Reply by hand from the inbox.
-app.post('/api/inbox/:number/reply', authenticateToken, async (req, res) => {
-    const num = String(req.params.number).replace(/\D/g, '');
-    const { text } = req.body || {};
-    if (!text || !text.trim()) return res.status(400).json({ error: 'Message text required' });
-
-    await whatsappClient.showTyping(req.user.org_id, num, 1200).catch(() => {});
-    const ok = await whatsappClient.sendMessage(req.user.org_id, num, text.trim());
-    if (!ok) return res.status(409).json({ error: 'WhatsApp is not connected' });
-    res.json({ success: true, message_id: typeof ok === 'string' ? ok : null });
-});
-
-// --- Contact health ---
-
-// Ask WhatsApp which of these numbers actually exist before we burn sends on them.
 app.post('/api/contacts/validate', authenticateToken, async (req, res) => {
     db.all('SELECT phone FROM contacts WHERE org_id = ?', [req.user.org_id], async (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
