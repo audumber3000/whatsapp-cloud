@@ -170,6 +170,31 @@ const sendConfirmation = async (userId, phone, { title, body, footer = '' }) => 
 };
 
 /** Post-visit feedback as a native poll rather than a link nobody opens. */
+/**
+ * A message with arbitrary tappable replies.
+ *
+ * `sendConfirmation` hardcodes Confirm/Reschedule/Cancel, which is right for a
+ * reminder and wrong for a template that defines its own. The button id comes
+ * back on the reply, so the answer stays structured rather than parsed.
+ */
+const sendButtons = async (userId, phone, { title, body, footer = '', buttons = [] }) => {
+    const instance = hooks.instanceNameForUser(userId);
+    if (!state.get(instance).isConnected) return false;
+    const list = (buttons || []).slice(0, 3)
+        .map((b, i) => ({ id: String(b.id || `btn_${i + 1}`), text: String(b.text || '').slice(0, 20) }))
+        .filter((b) => b.text);
+    if (!list.length) return sendMessage(userId, phone, body);
+    try {
+        const res = await client.sendButtons(instance, phone, {
+            title, description: body, footer, buttons: list,
+        });
+        return res?.key?.id || true;
+    } catch (error) {
+        console.error(`Error sending buttons for user ${userId}:`, error.message);
+        return false;
+    }
+};
+
 const sendFeedbackPoll = async (userId, phone, question, options) => {
     const instance = hooks.instanceNameForUser(userId);
     if (!state.get(instance).isConnected) return false;
@@ -299,6 +324,7 @@ module.exports = {
     notifyUser,
     bootAll,
     sendConfirmation,
+    sendButtons,
     sendFeedbackPoll,
     validateNumbers,
     showTyping,

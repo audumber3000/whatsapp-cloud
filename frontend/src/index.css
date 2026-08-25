@@ -1047,6 +1047,91 @@ button.tag-chip[style*="background"]:hover { filter: brightness(1.08); }
 @media (max-width: 1023px) { .wa-pill span.num { display: none; } }
 @media (max-width: 639px)  { .header-id { display: none; } }
 
+/* ==== templates & broadcasts ============================================= */
+/* The preview is the point of the templates screen: what the clinic reads here
+   is what the patient receives, so it reuses the inbox's chat ground and
+   bubble rather than a styled text box. */
+.template-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px; padding: 14px;
+}
+.template-card {
+    border: 1px solid var(--border); border-radius: var(--r-lg);
+    background: var(--surface); display: flex; flex-direction: column; overflow: hidden;
+}
+.template-card > header {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+    padding: 11px 12px 9px; border-bottom: 1px solid var(--border);
+}
+.template-card h4 {
+    font-size: 14.5px; font-weight: 700; margin: 0 0 5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.template-card > footer {
+    padding: 9px 12px; border-top: 1px solid var(--border); background: var(--surface-sunken);
+    display: flex; gap: 5px; flex-wrap: wrap;
+}
+.template-card > footer code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    background: var(--brand-ghost); color: var(--brand-teal);
+    padding: 1px 6px; border-radius: var(--r-sm);
+}
+
+.template-preview, .preview-ground {
+    padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1;
+    background-color: #EFEAE2;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='.035' stroke-width='1.6'%3E%3Ccircle cx='16' cy='16' r='6'/%3E%3Cpath d='M42 10h12v12H42zM70 44l8 8-8 8-8-8z'/%3E%3Cpath d='M12 60c4-6 12-6 16 0M58 78h14M24 84h10'/%3E%3Ccircle cx='84' cy='22' r='4'/%3E%3Cpath d='M2 38h14'/%3E%3C/g%3E%3C/svg%3E");
+}
+.preview-ground { border: 1px solid var(--border); border-radius: var(--r-md); }
+:root[data-theme="dark"] .template-preview,
+:root[data-theme="dark"] .preview-ground { background-color: #0B141A; }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .template-preview,
+    :root:not([data-theme="light"]) .preview-ground { background-color: #0B141A; }
+}
+/* A preview bubble is a sample, not a message in a run — no tail. */
+.template-preview .bubble::before, .preview-ground .bubble::before { display: none; }
+.template-preview .bubble, .preview-ground .bubble { border-radius: 7px; }
+.template-footer { font-size: 11.5px; color: rgba(17,27,33,.45); margin-top: 5px; }
+:root[data-theme="dark"] .template-footer { color: rgba(233,237,239,.45); }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .template-footer { color: rgba(233,237,239,.45); }
+}
+
+/* WhatsApp draws reply buttons as separate full-width chips under the bubble. */
+.template-buttons { display: flex; flex-direction: column; gap: 2px; }
+.template-buttons span {
+    background: #fff; color: #00A5F4; border-radius: 7px;
+    padding: 7px; text-align: center; font-size: 13.5px; font-weight: 500;
+    box-shadow: 0 1px .5px rgba(11,20,26,.13);
+}
+:root[data-theme="dark"] .template-buttons span { background: #202C33; color: #53BDEB; }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .template-buttons span { background: #202C33; color: #53BDEB; }
+}
+
+.template-editor { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
+.template-preview-pane { position: sticky; top: 0; }
+.preview-label {
+    display: block; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text-faint); margin-bottom: 6px;
+}
+@media (max-width: 800px) {
+    .template-editor { grid-template-columns: 1fr; }
+    .template-preview-pane { position: static; }
+}
+
+/* Delivery at a glance: sent, failed and skipped as one bar rather than three
+   numbers to add up. */
+.bcast-bar {
+    display: flex; height: 6px; border-radius: var(--r-sm); overflow: hidden;
+    background: var(--surface-sunken); border: 1px solid var(--border);
+}
+.bcast-bar span { display: block; height: 100%; }
+.bcast-bar .ok   { background: var(--brand); }
+.bcast-bar .bad  { background: var(--danger); }
+.bcast-bar .skip { background: var(--text-faint); }
+
 /* ==== responsive: three tiers ============================================= */
 /*
  * The app is designed at three widths, not "desktop plus a phone fallback":

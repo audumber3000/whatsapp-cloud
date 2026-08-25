@@ -94,6 +94,11 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 cron.schedule('* * * * *', () => {
     console.log('Checking for scheduled assignments...');
 
+    // Broadcasts due to go out. Deliberately not awaited: a broadcast paces
+    // itself over minutes, and the reminder sweep must not wait behind it.
+    require('./broadcasts').processDue().catch((e) =>
+        console.error('[scheduler] broadcast sweep failed:', e.message));
+
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');

@@ -4,7 +4,7 @@ import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Sun, Menu, Inbox, Search, LogOut, Link2Off,
   CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
-  Upload, Paperclip, Users, Pencil, Ban, ShieldCheck
+  Upload, Paperclip, Users, Pencil, Ban, ShieldCheck, FileText, Megaphone
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
@@ -18,6 +18,8 @@ import ResponseSummary from './components/ResponseSummary';
 import ActivityFeed from './components/ActivityFeed';
 import ApiKeyPanel from './components/ApiKeyPanel';
 import ContactsView from './components/ContactsView';
+import TemplatesView from './components/TemplatesView';
+import BroadcastsView from './components/BroadcastsView';
 
 import { io } from 'socket.io-client';
 import {
@@ -41,6 +43,8 @@ const NAV = [
   { tab: 'inbox',       label: 'Inbox',         Icon: Inbox },
   { section: 'Messaging' },
   { tab: 'automations', label: 'Automations',   Icon: Zap },
+  { tab: 'templates',   label: 'Templates',     Icon: FileText },
+  { tab: 'broadcasts',  label: 'Broadcasts',    Icon: Megaphone },
   { tab: 'contacts',    label: 'Contacts',      Icon: Users },
   { tab: 'logs',        label: 'Activity Logs', Icon: Activity },
   { section: 'Settings & Help' },
@@ -112,7 +116,10 @@ const TIMEZONES = [
 // Which URL maps to which screen. Navigation used to be a useState value, so
 // the URL was always "/" — nothing could be linked or bookmarked, refresh
 // always dumped you on the dashboard, and browser Back left the app entirely.
-const TABS = ['dashboard', 'inbox', 'automations', 'contacts', 'logs', 'settings', 'profile'];
+// The route allowlist. A tab added to NAV but not here resolves to the 404,
+// which is exactly what happened when Templates and Broadcasts were added.
+const TABS = ['dashboard', 'inbox', 'automations', 'templates', 'broadcasts',
+              'contacts', 'logs', 'settings', 'profile'];
 const pathToTab = (pathname) => {
   const seg = pathname.replace(/^\/+|\/+$/g, '').split('/')[0];
   if (!seg) return 'dashboard';
@@ -348,6 +355,7 @@ function MainApp() {
         <AppHeader
           title={{
             dashboard: 'Dashboard', automations: 'Automations', contacts: 'Contacts',
+            templates: 'Templates', broadcasts: 'Broadcasts',
             inbox: 'Inbox', logs: 'Message Logs', settings: 'Settings', profile: 'Your Profile',
           }[activeTab] || 'WA Reach'}
           me={me}
@@ -364,7 +372,7 @@ function MainApp() {
         <ErrorBoundary>
           {notFound ? (
             <NotFound onHome={() => setActiveTab('dashboard')} />
-          ) : !isLinked && !['settings', 'contacts', 'inbox', 'profile'].includes(activeTab) ? (
+          ) : !isLinked && !['settings', 'contacts', 'inbox', 'profile', 'templates', 'broadcasts'].includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -393,6 +401,8 @@ function MainApp() {
               {activeTab === 'dashboard' && <DashboardView token={token} setActiveTab={setActiveTab} userPhone={userPhone} isLinked={isLinked} socket={socketRef} />}
               {activeTab === 'automations' && <AutomationsView token={token} onToast={addNotification} />}
               {activeTab === 'contacts' && <ContactsView apiUrl={API_URL} token={token} onToast={addNotification} />}
+              {activeTab === 'templates' && <TemplatesView apiUrl={API_URL} token={token} onToast={addNotification} />}
+              {activeTab === 'broadcasts' && <BroadcastsView apiUrl={API_URL} token={token} onToast={addNotification} />}
               {activeTab === 'inbox' && (
                 <InboxView
                   apiUrl={API_URL}

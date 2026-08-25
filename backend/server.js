@@ -136,6 +136,11 @@ app.use('/api', require('./tags').router({ authenticateToken, requireRole: auth.
 app.use('/api/inbox', require('./inbox').router({ authenticateToken, requireRole: auth.requireRole }));
 app.use('/api', require('./inbox').configRouter({ authenticateToken, requireRole: auth.requireRole }));
 
+// Templates and broadcasts. Message wording used to exist only inline in an
+// automation, and bulk sends only as a pasted list of numbers.
+app.use('/api/templates', require('./templates').router({ authenticateToken, requireRole: auth.requireRole }));
+app.use('/api/broadcasts', require('./broadcasts').router({ authenticateToken, requireRole: auth.requireRole }));
+
 // --- Auth Endpoints ---
 app.post('/api/signup', throttleAuth, async (req, res) => {
     try {
