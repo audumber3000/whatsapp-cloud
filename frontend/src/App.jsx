@@ -30,6 +30,18 @@ import {
 
 const API_URL = '/api';
 
+/**
+ * Screens that work before a number is linked.
+ *
+ * Everything here is configuration or reading — you should be able to write
+ * your automations, templates and contact list while waiting to scan. Only
+ * the Dashboard, which is where the QR lives, insists on a connection.
+ */
+const CONFIGURABLE_UNLINKED = [
+  'settings', 'contacts', 'inbox', 'profile',
+  'templates', 'broadcasts', 'analytics', 'automations', 'logs',
+];
+
 // Recharts is ~400KB and only Analytics uses it in-app, so it is fetched when
 // that tab is opened rather than before the login form can paint.
 const AnalyticsView = lazy(() => import('./components/AnalyticsView'));
@@ -422,7 +434,7 @@ function MainApp() {
         <ErrorBoundary>
           {notFound ? (
             <NotFound onHome={() => setActiveTab('dashboard')} />
-          ) : !isLinked && !['settings', 'contacts', 'inbox', 'profile', 'templates', 'broadcasts', 'analytics'].includes(activeTab) ? (
+          ) : !isLinked && !CONFIGURABLE_UNLINKED.includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -809,6 +821,13 @@ function AutomationsView({ token, onToast }) {
     fetchAutomations();
   }, [token]);
 
+  /** Tolerates both shapes, so neither a legacy string nor jsonb can break Edit. */
+  const toDays = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') { try { return JSON.parse(v); } catch { /* fall through */ } }
+    return [1, 2, 3, 4, 5];
+  };
+
   const handleEditClick = async (id) => {
     try {
       const res = await fetch(`${API_URL}/automations/${id}`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -827,7 +846,11 @@ function AutomationsView({ token, onToast }) {
           end_time: data.end_time,
           message_template: Array.isArray(blocks) ? blocks : [{ variations: [''] }],
           contacts: data.contacts ? data.contacts.join(', ') : '',
-          active_days: data.active_days ? JSON.parse(data.active_days) : [1,2,3,4,5],
+          // `active_days` was a TEXT column under SQLite, so this used to be a
+          // JSON string. It is jsonb now and node-pg hands back a real array —
+          // JSON.parse on an array throws, which aborted this handler before
+          // it could open the modal. That is why Edit did nothing at all.
+          active_days: toDays(data.active_days),
           ask_confirmation: !!data.ask_confirmation,
           timezone_offset: data.timezone_offset !== undefined ? data.timezone_offset : new Date().getTimezoneOffset()
         });
@@ -837,7 +860,8 @@ function AutomationsView({ token, onToast }) {
         onToast('error', 'Could not load that automation.');
       }
     } catch (err) {
-      console.error(err);
+      console.error('[automations] edit failed:', err);
+      onToast('error', 'Could not open that automation for editing.');
     }
   };
 
