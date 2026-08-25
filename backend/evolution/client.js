@@ -156,10 +156,17 @@ async function sendText(instanceName, phone, text) {
  * matching the previous whatsapp-web.js behaviour.
  */
 async function sendMedia(instanceName, phone, { media, mimetype, fileName, caption = '' }) {
-    const isInline = /^image\/|^video\//.test(mimetype || '');
+    // Evolution needs the KIND, not just the MIME type: 'document' arrives as a
+    // file attachment, 'audio' as a playable clip. Audio used to fall into the
+    // document branch, so an uploaded voice note arrived as a file to download.
+    const mt = String(mimetype || '');
+    const mediatype = mt.startsWith('image/') ? 'image'
+        : mt.startsWith('video/') ? 'video'
+        : mt.startsWith('audio/') ? 'audio'
+        : 'document';
     const body = {
         number: formatNumber(phone),
-        mediatype: isInline ? (mimetype.startsWith('image/') ? 'image' : 'video') : 'document',
+        mediatype,
         mimetype: mimetype || 'application/octet-stream',
         media,
         fileName: fileName || 'file',
