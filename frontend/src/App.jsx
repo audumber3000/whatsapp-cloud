@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageCircle, LayoutDashboard, Zap, Activity,
@@ -21,7 +21,7 @@ import ContactsView from './components/ContactsView';
 import SettingsView from './components/SettingsView';
 import TemplatesView from './components/TemplatesView';
 import BroadcastsView from './components/BroadcastsView';
-import AnalyticsView from './components/AnalyticsView';
+
 
 import { io } from 'socket.io-client';
 import {
@@ -29,6 +29,10 @@ import {
 } from 'recharts';
 
 const API_URL = '/api';
+
+// Recharts is ~400KB and only Analytics uses it in-app, so it is fetched when
+// that tab is opened rather than before the login form can paint.
+const AnalyticsView = lazy(() => import('./components/AnalyticsView'));
 
 /**
  * The navigation, as data.
@@ -415,7 +419,11 @@ function MainApp() {
                 />
               )}
               {activeTab === 'logs' && <LogsView token={token} />}
-              {activeTab === 'analytics' && <AnalyticsView apiUrl={API_URL} token={token} onToast={addNotification} />}
+              {activeTab === 'analytics' && (
+                <Suspense fallback={<div className="card"><p style={{ color: 'var(--text-muted)' }}>Loading charts…</p></div>}>
+                  <AnalyticsView apiUrl={API_URL} token={token} onToast={addNotification} />
+                </Suspense>
+              )}
               {activeTab === 'settings' && (
                 <SettingsView apiUrl={API_URL} token={token} onToast={addNotification} role={me?.org?.role || me?.role} />
               )}

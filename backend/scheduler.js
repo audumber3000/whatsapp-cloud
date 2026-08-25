@@ -91,6 +91,17 @@ async function recordSendOutcome(orgId, ok) {
 // Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * A web instance can run without the worker.
+ *
+ * Useful in production (scale the API without duplicating every send) and
+ * necessary in development, where this database holds real clinics' queued
+ * messages and starting the app must not dispatch them.
+ */
+if (process.env.SCHEDULER_DISABLED === '1') {
+    console.log('[scheduler] disabled by SCHEDULER_DISABLED=1 — nothing will be dispatched.');
+} else {
+
 cron.schedule('* * * * *', () => {
     console.log('Checking for scheduled assignments...');
 
@@ -414,4 +425,8 @@ cron.schedule('* * * * *', () => {
 
 });
 
-console.log('Scheduler is running.');
+}   // end SCHEDULER_DISABLED guard
+
+console.log(process.env.SCHEDULER_DISABLED === '1'
+    ? 'Scheduler is NOT running (SCHEDULER_DISABLED=1).'
+    : 'Scheduler is running.');

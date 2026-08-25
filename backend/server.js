@@ -15,12 +15,85 @@ require('./scheduler');
 const config = require('./config');
 const JWT_SECRET = config.jwtSecret;
 
+const hardening = require('./hardening');
+// A single uncaught exception is a full outage here — PM2 pins this to one
+// instance. Installed before anything else can throw.
+hardening.guardProcess();
+
 const app = express();
-app.use(cors());
+// Behind nginx / Railway's proxy, so req.ip is the client rather than the
+// proxy — which matters for both rate limiting and the audit log.
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+app.use(hardening.requestId);
+app.use(hardening.securityHeaders({ https: /^https:/.test(process.env.WAREACH_PUBLIC_URL || '') }));
+app.use(hardening.accessLog);
+
+// `cors()` allowed any origin to call this API with credentials. The dashboard
+// is same-origin in production and needs none; the allowlist exists for local
+// development and for products calling the programmable API.
+app.use(hardening.corsPolicy({
+    allowed: [
+        process.env.WAREACH_PUBLIC_URL,
+        ...String(process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()),
+        ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5173', 'http://localhost:3000']),
+    ],
+}));
+
 app.use(express.json({ limit: '12mb' })); // larger limit so logo data-URIs fit
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, 'public')));
+
+/**
+ * Health, for the load balancer and for anyone asking "is it actually up".
+ * Reports the two dependencies that can be down while the process is fine.
+ */
+app.get('/api/health', async (req, res) => {
+    const out = { status: 'ok', uptime: Math.round(process.uptime()), version: process.env.npm_package_version || null };
+    // Only the database is fatal. A clinic that has not linked a phone yet is
+    // a perfectly healthy box, and returning 503 for that would have a load
+    // balancer pull it out of rotation forever.
+    let fatal = false;
+    try {
+        await db.one('SELECT 1 AS ok');
+        out.database = 'ok';
+    } catch (e) {
+        out.status = 'unhealthy';
+        out.database = 'unreachable';
+        fatal = true;
+    }
+    try {
+        const list = require('./evolution/state').instances() || [];
+        const connected = list.filter((s) => s.isConnected).length;
+        out.whatsapp = `${connected}/${list.length} connected`;
+        // A box with instances but none paired is up, and useless.
+        if (list.length && connected === 0 && !fatal) out.status = 'degraded';
+    } catch { out.whatsapp = 'unknown'; }
+    res.status(fatal ? 503 : 200).json(out);
+});
+
+/**
+ * A ceiling on the dashboard API. Only /api/v1 had one before, so a script
+ * could hammer everything else freely.
+ *
+ * This runs before any route's authenticateToken, so req.user does not exist
+ * yet — the bucket key is derived from the token here instead. Verifying it
+ * matters: keying on the raw string would let an attacker mint a fresh bucket
+ * per request with random garbage and bypass the IP limit entirely. An invalid
+ * token falls back to the IP, which is the right bucket for a 401 flood.
+ */
+app.use('/api', hardening.rateLimit({
+    max: 600, windowMs: 60_000, name: 'dashboard',
+    keyOf: (req) => {
+        const raw = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        if (raw) {
+            try { return `u:${jwt.verify(raw, JWT_SECRET).id}`; } catch { /* fall through to IP */ }
+        }
+        return `ip:${req.ip}`;
+    },
+}));
 
 // Evolution API pushes pairing codes, connection changes and delivery
 // receipts here. Authenticated by a shared secret inside the router.
@@ -1007,6 +1080,12 @@ app.use((req, res, next) => {
     }
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// An unclaimed /api path is a 404 in JSON, not the SPA shell.
+app.use(hardening.apiNotFound);
+// Last: an async route that throws reaches here instead of Express's default
+// handler, which prints a stack trace into the response body.
+app.use(hardening.errorHandler);
 
 // Start Server
 const PORT = process.env.PORT || 3000;
