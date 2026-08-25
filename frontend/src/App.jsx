@@ -191,6 +191,40 @@ function MainApp() {
   // WA Connection State
   const [isLinked, setIsLinked] = useState(false);
   const [qrCodeData, setQrCodeData] = useState('');
+  const [qrRefreshing, setQrRefreshing] = useState(false);
+
+  /**
+   * Ask for a pairing code.
+   *
+   * Nothing did this before: initializeUserClient ran only on login and on
+   * boot, so an already-signed-in user staring at the connect screen waited
+   * for a QR that was never going to be generated.
+   */
+  const requestQr = useCallback(async () => {
+    if (!token) return;
+    setQrRefreshing(true);
+    try {
+      const r = await fetch(`${API_URL}/wa/connect`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.currentQR) setQrCodeData(d.currentQR);
+      if (d.isConnected) setIsLinked(true);
+    } catch { /* the socket is still the primary path */ }
+    finally { setQrRefreshing(false); }
+  }, [token]);
+
+
+  // While the connect screen is showing and nothing is linked, keep a live
+  // code on screen. WhatsApp expires a QR in well under a minute, so asking
+  // once would leave a dead square for anyone who did not scan immediately.
+  useEffect(() => {
+    if (!token || isLinked) return;
+    requestQr();
+    const t = setInterval(requestQr, 25000);
+    return () => clearInterval(t);
+  }, [token, isLinked, requestQr]);
+
   const [userPhone, setUserPhone] = useState(null);
 
   // Notifications State
@@ -200,7 +234,16 @@ function MainApp() {
   // behaviour as a callable so other code paths can raise one too.
   const addNotification = useCallback((type, message) => {
     const id = Date.now() + Math.random();
-    setNotifications((prev) => [...prev, { type, message, id }]);
+    setNotifications((prev) => {
+      // The same message arriving again replaces the last one rather than
+      // stacking. A failing request in a retry loop used to paper the screen
+      // with hundreds of identical toasts; one toast says the same thing.
+      const last = prev[prev.length - 1];
+      if (last && last.type === type && last.message === message) {
+        return [...prev.slice(0, -1), { type, message, id }];
+      }
+      return [...prev, { type, message, id }];
+    });
     setTimeout(() => setNotifications((prev) => prev.filter((n) => n.id !== id)), 5000);
   }, []);
 
@@ -393,7 +436,9 @@ function MainApp() {
                      <QRCodeSVG value={qrCodeData} size={200} level="L" />
                   ) : (
                     <div className="qr-placeholder-img">
-                      <span style={{ color: 'var(--text-faint)', fontSize: '14px' }}>QR Code Loading...</span>
+                      <span style={{ color: 'var(--text-faint)', fontSize: '14px' }}>
+                        {qrRefreshing ? 'Asking WhatsApp for a code…' : 'No code yet'}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -401,6 +446,19 @@ function MainApp() {
                 <div className={`scan-status ${qrCodeData ? 'pending' : ''}`}>
                   {qrCodeData ? 'Waiting for scan...' : 'Generating code...'}
                 </div>
+
+                <button
+                  className="btn-outline btn-sm"
+                  style={{ marginTop: 12 }}
+                  onClick={requestQr}
+                  disabled={qrRefreshing}
+                >
+                  {qrRefreshing ? 'Refreshing…' : 'Refresh code'}
+                </button>
+                <p style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8, maxWidth: '34ch', marginInline: 'auto' }}>
+                  WhatsApp expires a code after about a minute, so this refreshes itself
+                  while the page is open.
+                </p>
               </div>
             </div>
           ) : (
@@ -415,7 +473,7 @@ function MainApp() {
                   apiUrl={API_URL}
                   token={token}
                   socket={socketRef}
-                  onToast={(type, msg) => addNotification(type, msg)}
+                  onToast={addNotification}
                 />
               )}
               {activeTab === 'logs' && <LogsView token={token} />}

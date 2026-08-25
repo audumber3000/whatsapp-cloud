@@ -5,6 +5,7 @@ import {
 import {
     ChartCard, TrendLines, Bars, Donut, Gauge, Sparkline, Funnel, Legend, SERIES,
 } from './ui/Chart';
+import useEvent from '../hooks/useEvent';
 
 /**
  * Analytics.
@@ -31,7 +32,10 @@ const duration = (mins) => {
     return h < 24 ? `${h}h ${mins % 60}m` : `${Math.floor(h / 24)}d`;
 };
 
-export default function AnalyticsView({ apiUrl, token, onToast }) {
+export default function AnalyticsView({ apiUrl, token, onToast: rawToast }) {
+    // Stable identity: a parent passing an inline arrow must not make
+    // every fetch callback re-fire. See hooks/useEvent.js.
+    const onToast = useEvent(rawToast);
     const [range, setRange] = useState('30d');
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);

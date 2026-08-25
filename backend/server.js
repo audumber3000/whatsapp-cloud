@@ -469,6 +469,25 @@ app.get('/api/wa/status', authenticateToken, (req, res) => {
     res.json(status);
 });
 
+/**
+ * Ask Evolution for a pairing code.
+ *
+ * The connect screen used to be entirely passive: it waited for a QR that only
+ * ever arrived if you had just logged in, or if the server had just booted —
+ * the only two callers of initializeUserClient. A WhatsApp QR also expires in
+ * well under a minute, so once a pairing attempt lapsed no further ones were
+ * pushed and the screen sat on "QR Code Loading..." indefinitely. Now the
+ * screen can ask, on open and on demand.
+ */
+app.post('/api/wa/connect', authenticateToken, (req, res) => {
+    const status = whatsappClient.getStatus(req.user.org_id);
+    if (status.isConnected) return res.json({ isConnected: true, phone: status.phone });
+    whatsappClient.initializeUserClient(req.user.org_id);
+    // Fire-and-forget by design: the QR arrives over the socket when Evolution
+    // pushes qrcode.updated, which is the same path a fresh login uses.
+    res.json({ requested: true, isConnected: false, currentQR: status.currentQR || '' });
+});
+
 app.post('/api/wa/disconnect', authenticateToken, async (req, res) => {
     try {
         const success = await whatsappClient.disconnectClient(req.user.org_id);

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Pencil, Trash2, FileText, Search, AlertTriangle } from 'lucide-react';
 import Modal from './ui/Modal';
 import { useConfirm } from './ui/ConfirmDialog';
+import useEvent from '../hooks/useEvent';
 
 /**
  * Templates — message wording, named once.
@@ -18,7 +19,10 @@ const CATEGORY = {
     marketing: { label: 'Marketing', hint: 'Offers and campaigns — needs opt-in' },
 };
 
-export default function TemplatesView({ apiUrl, token, onToast }) {
+export default function TemplatesView({ apiUrl, token, onToast: rawToast }) {
+    // Stable identity: a parent passing an inline arrow must not make
+    // every fetch callback re-fire. See hooks/useEvent.js.
+    const onToast = useEvent(rawToast);
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');

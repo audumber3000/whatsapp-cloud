@@ -6,6 +6,7 @@ import {
 import Modal from './ui/Modal';
 import Drawer from './ui/Drawer';
 import { useConfirm } from './ui/ConfirmDialog';
+import useEvent from '../hooks/useEvent';
 
 /**
  * Broadcasts.
@@ -35,7 +36,10 @@ const when = (iso) => iso ? new Date(iso).toLocaleString([], {
     day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
 }) : '—';
 
-export default function BroadcastsView({ apiUrl, token, onToast }) {
+export default function BroadcastsView({ apiUrl, token, onToast: rawToast }) {
+    // Stable identity: a parent passing an inline arrow must not make
+    // every fetch callback re-fire. See hooks/useEvent.js.
+    const onToast = useEvent(rawToast);
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(true);
     const [composing, setComposing] = useState(false);

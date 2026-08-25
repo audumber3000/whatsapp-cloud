@@ -7,6 +7,7 @@ import {
 import Modal from './ui/Modal';
 import { useConfirm } from './ui/ConfirmDialog';
 import Avatar from './ui/Avatar';
+import useEvent from '../hooks/useEvent';
 
 /**
  * Settings.
@@ -47,7 +48,10 @@ const when = (iso) => iso ? new Date(iso).toLocaleString([], {
     day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
 }) : '—';
 
-export default function SettingsView({ apiUrl, token, onToast, role }) {
+export default function SettingsView({ apiUrl, token, onToast: rawToast, role }) {
+    // Stable identity: a parent passing an inline arrow must not make
+    // every fetch callback re-fire. See hooks/useEvent.js.
+    const onToast = useEvent(rawToast);
     const [section, setSection] = useState('workspace');
     const canManage = role === 'owner' || role === 'manager';
 

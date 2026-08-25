@@ -7,6 +7,7 @@ import {
 import Avatar from './ui/Avatar';
 import Dropdown, { DropdownItem, DropdownDivider } from './ui/Dropdown';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import useEvent from '../hooks/useEvent';
 
 /**
  * The team inbox, built to read like WhatsApp Web.
@@ -80,7 +81,10 @@ function Ticks({ status, delivery }) {
     return <Clock size={12} />;
 }
 
-export default function InboxView({ apiUrl, token, socket, onToast }) {
+export default function InboxView({ apiUrl, token, socket, onToast: rawToast }) {
+    // Stable identity: a parent passing an inline arrow must not make
+    // every fetch callback re-fire. See hooks/useEvent.js.
+    const onToast = useEvent(rawToast);
     const [list, setList] = useState([]);
     const [counts, setCounts] = useState({ open: 0, pending: 0, resolved: 0, mine: 0, unassigned: 0 });
     const [statusTab, setStatusTab] = useState('open');

@@ -6,6 +6,7 @@ import {
 import Modal from './ui/Modal';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import useEvent from '../hooks/useEvent';
 import ContactDrawer from './ContactDrawer';
 import { useConfirm } from './ui/ConfirmDialog';
 
@@ -16,7 +17,10 @@ import { useConfirm } from './ui/ConfirmDialog';
  * filters and no pagination — it fetched and rendered every row the account
  * had. Rows did nothing when clicked, because there was no record to open.
  */
-export default function ContactsView({ apiUrl, token, onToast }) {
+export default function ContactsView({ apiUrl, token, onToast: rawToast }) {
+    // Stable identity: a parent passing an inline arrow must not make
+    // every fetch callback re-fire. See hooks/useEvent.js.
+    const onToast = useEvent(rawToast);
     const [rows, setRows] = useState([]);
     const [pagination, setPagination] = useState({ page: 1, totalPages: 1, total: 0, limit: 25 });
     const [loading, setLoading] = useState(true);
