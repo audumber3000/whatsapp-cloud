@@ -140,6 +140,7 @@ app.use('/api', require('./inbox').configRouter({ authenticateToken, requireRole
 // automation, and bulk sends only as a pasted list of numbers.
 app.use('/api/templates', require('./templates').router({ authenticateToken, requireRole: auth.requireRole }));
 app.use('/api/broadcasts', require('./broadcasts').router({ authenticateToken, requireRole: auth.requireRole }));
+app.use('/api/analytics', require('./analytics').router({ authenticateToken }));
 
 // --- Auth Endpoints ---
 app.post('/api/signup', throttleAuth, async (req, res) => {

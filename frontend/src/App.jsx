@@ -4,7 +4,7 @@ import {
   MessageCircle, LayoutDashboard, Zap, Activity,
   Settings, Moon, Sun, Menu, Inbox, Search, LogOut, Link2Off,
   CheckCircle2, XCircle, Clock, Plus, ArrowRight, ChevronLeft, ChevronRight, AlertTriangle, Trash2,
-  Upload, Paperclip, Users, Pencil, Ban, ShieldCheck, FileText, Megaphone
+  Upload, Paperclip, Users, Pencil, Ban, ShieldCheck, FileText, Megaphone, BarChart3
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppGlyph, Logo } from './components/Brand';
@@ -20,6 +20,7 @@ import ApiKeyPanel from './components/ApiKeyPanel';
 import ContactsView from './components/ContactsView';
 import TemplatesView from './components/TemplatesView';
 import BroadcastsView from './components/BroadcastsView';
+import AnalyticsView from './components/AnalyticsView';
 
 import { io } from 'socket.io-client';
 import {
@@ -47,6 +48,7 @@ const NAV = [
   { tab: 'broadcasts',  label: 'Broadcasts',    Icon: Megaphone },
   { tab: 'contacts',    label: 'Contacts',      Icon: Users },
   { tab: 'logs',        label: 'Activity Logs', Icon: Activity },
+  { tab: 'analytics',   label: 'Analytics',     Icon: BarChart3 },
   { section: 'Settings & Help' },
   { tab: 'settings',    label: 'Settings',      Icon: Settings },
 ];
@@ -119,7 +121,7 @@ const TIMEZONES = [
 // The route allowlist. A tab added to NAV but not here resolves to the 404,
 // which is exactly what happened when Templates and Broadcasts were added.
 const TABS = ['dashboard', 'inbox', 'automations', 'templates', 'broadcasts',
-              'contacts', 'logs', 'settings', 'profile'];
+              'contacts', 'logs', 'analytics', 'settings', 'profile'];
 const pathToTab = (pathname) => {
   const seg = pathname.replace(/^\/+|\/+$/g, '').split('/')[0];
   if (!seg) return 'dashboard';
@@ -355,7 +357,7 @@ function MainApp() {
         <AppHeader
           title={{
             dashboard: 'Dashboard', automations: 'Automations', contacts: 'Contacts',
-            templates: 'Templates', broadcasts: 'Broadcasts',
+            templates: 'Templates', broadcasts: 'Broadcasts', analytics: 'Analytics',
             inbox: 'Inbox', logs: 'Message Logs', settings: 'Settings', profile: 'Your Profile',
           }[activeTab] || 'WA Reach'}
           me={me}
@@ -372,7 +374,7 @@ function MainApp() {
         <ErrorBoundary>
           {notFound ? (
             <NotFound onHome={() => setActiveTab('dashboard')} />
-          ) : !isLinked && !['settings', 'contacts', 'inbox', 'profile', 'templates', 'broadcasts'].includes(activeTab) ? (
+          ) : !isLinked && !['settings', 'contacts', 'inbox', 'profile', 'templates', 'broadcasts', 'analytics'].includes(activeTab) ? (
             <div className="connect-view">
               <div className="connect-card">
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
@@ -412,6 +414,7 @@ function MainApp() {
                 />
               )}
               {activeTab === 'logs' && <LogsView token={token} />}
+              {activeTab === 'analytics' && <AnalyticsView apiUrl={API_URL} token={token} onToast={addNotification} />}
               {activeTab === 'settings' && <SettingsView token={token} />}
               {activeTab === 'profile' && (
                 <ProfileView

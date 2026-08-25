@@ -1132,6 +1132,99 @@ button.tag-chip[style*="background"]:hover { filter: brightness(1.08); }
 .bcast-bar .bad  { background: var(--danger); }
 .bcast-bar .skip { background: var(--text-faint); }
 
+/* ==== analytics ========================================================== */
+.analytics-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+/* A segmented control, not three loose buttons: the ranges are exclusive. */
+.range-picker { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.range-picker button {
+    font: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px;
+    border: 0; border-right: 1px solid var(--border);
+    background: var(--surface); color: var(--text-muted); cursor: pointer;
+}
+.range-picker button:last-child { border-right: 0; }
+.range-picker button:hover { background: var(--surface-raised); color: var(--text); }
+.range-picker button.active { background: var(--brand); color: var(--text-on-brand); }
+
+.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.chart-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-lg); box-shadow: var(--sh-1);
+    display: flex; flex-direction: column; min-width: 0;
+}
+.chart-card > header {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 13px 16px 10px;
+}
+.chart-card h3 { font-size: 14.5px; font-weight: 700; margin: 0; }
+.chart-card header p { font-size: 12.5px; color: var(--text-muted); margin: 3px 0 0; max-width: 54ch; }
+.chart-card-body { padding: 0 16px 14px; flex: 1; min-width: 0; }
+.chart-note { font-size: 12.5px; color: var(--text-muted); margin-top: 8px; }
+.chart-blank {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 150px; color: var(--text-faint); font-size: 13px; text-align: center;
+}
+
+/* Grid and axes stay recessive; the marks carry the message. */
+.chart-legend {
+    display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
+    margin-top: 8px; font-size: 12px; color: var(--text-muted);
+}
+.chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; flex: none; }
+
+.chart-tip {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+    box-shadow: var(--sh-3); padding: 8px 10px; font-size: 12.5px; min-width: 130px;
+}
+.chart-tip-label { font-weight: 700; margin-bottom: 5px; color: var(--text); }
+/* Text wears text tokens; the swatch beside it carries identity. */
+.chart-tip-row { display: flex; align-items: center; gap: 7px; color: var(--text-muted); }
+.chart-tip-row i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.chart-tip-row b { margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.chart-donut { position: relative; }
+.chart-donut-center {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; pointer-events: none;
+}
+.chart-donut-center b { display: block; font-size: 24px; font-weight: 800; letter-spacing: -0.02em; }
+.chart-donut-center span { font-size: 11.5px; color: var(--text-muted); }
+
+/* The funnel is aligned bars from a common baseline, not a tapered graphic:
+   the question is "where did it drop", which areas answer badly. */
+.funnel { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.funnel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.funnel-label { font-size: 13px; font-weight: 600; }
+.funnel-value { display: inline-flex; align-items: baseline; gap: 7px; font-variant-numeric: tabular-nums; }
+.funnel-value b { font-size: 14px; font-weight: 700; }
+.funnel-value em { font-style: normal; font-size: 12px; color: var(--text-muted); }
+.funnel-track {
+    height: 10px; background: var(--c-empty); border-radius: var(--r-sm);
+    overflow: hidden; margin-top: 4px;
+}
+.funnel-track span { display: block; height: 100%; border-radius: var(--r-sm); }
+.funnel-drop { font-size: 11.5px; color: var(--danger); margin-top: 3px; }
+
+.stat-delta { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; }
+.stat-delta.up { color: var(--success); }
+.stat-delta.down { color: var(--danger); }
+.sparkline { margin-top: 4px; }
+
+@media (min-width: 640px) and (max-width: 1023px) {
+    .chart-grid { grid-template-columns: 1fr; }
+    .chart-card[style*="span"] { grid-column: auto !important; }
+}
+@media (max-width: 639px) {
+    .chart-grid { grid-template-columns: 1fr; gap: 10px; }
+    .chart-card[style*="span"] { grid-column: auto !important; }
+    .analytics-head { flex-direction: column; align-items: stretch; }
+    .range-picker { width: 100%; }
+    .range-picker button { flex: 1; }
+}
+
 /* ==== responsive: three tiers ============================================= */
 /*
  * The app is designed at three widths, not "desktop plus a phone fallback":

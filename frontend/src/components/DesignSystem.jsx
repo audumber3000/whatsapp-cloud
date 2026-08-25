@@ -3,6 +3,7 @@ import {
     AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { ChartTooltip, Legend, AXIS, SERIES, Funnel } from './ui/Chart';
 import {
     CheckCircle2, XCircle, Clock, Send, Plus, Search, Trash2, Pencil,
     AlertTriangle, Inbox, MessageSquare, TrendingUp, TrendingDown,
@@ -36,38 +37,11 @@ const donut = [
     { name: 'Cancelled', value: 6 },
     { name: 'No reply', value: 24 },
 ];
-const SERIES = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)'];
 
 /* ── shared chart pieces ───────────────────────────────────────────────────── */
-
-// Text wears text tokens, never the series colour; the swatch carries identity.
-function ChartTooltip({ active, payload, label }) {
-    if (!active || !payload?.length) return null;
-    return (
-        <div className="chart-tip">
-            {label && <div className="chart-tip-label">{label}</div>}
-            {payload.map((p, i) => (
-                <div className="chart-tip-row" key={i}>
-                    <i style={{ background: p.color || p.fill }} />
-                    <span>{p.name}</span>
-                    <b>{p.value}</b>
-                </div>
-            ))}
-        </div>
-    );
-}
-
-function Legend({ items }) {
-    return (
-        <div className="chart-legend">
-            {items.map(([label, color]) => (
-                <span key={label}><i style={{ background: color }} />{label}</span>
-            ))}
-        </div>
-    );
-}
-
-const AXIS = { stroke: 'var(--c-axis)', fontSize: 11, tickLine: false, axisLine: false };
+/* ChartTooltip, Legend, AXIS and SERIES now live in ui/Chart.jsx and are
+   imported above. They were defined here, which meant this catalog and the
+   real screens could only ever *look* alike; now the import graph enforces it. */
 
 function Panel({ title, sub, children, wide }) {
     return (
@@ -273,6 +247,16 @@ export default function DesignSystem() {
                         <div className="ds-donut-center"><b>90</b><span>reminders</span></div>
                     </div>
                     <Legend items={donut.map((d, i) => [`${d.name} · ${d.value}`, SERIES[i]])} />
+                </Panel>
+
+                <Panel title="Funnel" sub="Aligned bars from a common baseline — the question is where it dropped, which areas answer badly.">
+                    <Funnel steps={[
+                        { label: 'Queued', value: 240, dropLabel: 'never attempted' },
+                        { label: 'Sent', value: 228, dropLabel: 'failed to send' },
+                        { label: 'Delivered', value: 214, dropLabel: 'not delivered' },
+                        { label: 'Read', value: 176, dropLabel: 'unread' },
+                        { label: 'Replied', value: 90, dropLabel: 'no reply' },
+                    ]} />
                 </Panel>
 
                 <Panel title="Gauge" sub="A single bounded number. The remainder is neutral, not a second series.">
