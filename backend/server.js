@@ -131,6 +131,11 @@ app.use('/api/contacts', require('./contacts').router({ authenticateToken, requi
 // Org-level configuration the contact record depends on.
 app.use('/api', require('./tags').router({ authenticateToken, requireRole: auth.requireRole }));
 
+// The team inbox. Its three routes were referenced by the UI for months and
+// never existed — see the header comment in inbox.js.
+app.use('/api/inbox', require('./inbox').router({ authenticateToken, requireRole: auth.requireRole }));
+app.use('/api', require('./inbox').configRouter({ authenticateToken, requireRole: auth.requireRole }));
+
 // --- Auth Endpoints ---
 app.post('/api/signup', throttleAuth, async (req, res) => {
     try {
@@ -1005,17 +1010,37 @@ io.use((socket, next) => {
 whatsappClient.setIo(io);
 
 io.on('connection', (socket) => {
-    const orgId = socket.user.id;
-    console.log(`User ${orgId} connected via socket`);
-    
-    // Join a room specific to this user so we can emit targeted status updates
-    socket.join(`user_${orgId}`);
-    
-    // Send current status on connection
+    // `socket.user.id` is the USER; the WhatsApp number, the contacts and the
+    // inbox all belong to the ORG. These were the same integer before the
+    // multi-tenant migration and are now two different UUIDs, so every emit
+    // aimed at `user_<orgId>` was landing in an empty room — status updates,
+    // inbound replies and notifications all silently went nowhere.
+    const { id: userId, org_id: orgId, username } = socket.user;
+    socket.join(`org_${orgId}`);
+    socket.join(`user_${userId}`);
+
     socket.emit('wa_status', whatsappClient.getStatus(orgId));
-    
+
+    // Presence, so two agents on one number can see each other.
+    socket.to(`org_${orgId}`).emit('presence', { userId, username, online: true });
+    socket.on('presence:who', () => {
+        socket.to(`org_${orgId}`).emit('presence:ping', { userId, username });
+    });
+    socket.on('presence:pong', () => {
+        socket.to(`org_${orgId}`).emit('presence', { userId, username, online: true });
+    });
+
+    // Typing indicators are agent-to-agent — "someone else is already
+    // answering this" — and never reach the patient.
+    socket.on('inbox:typing', ({ conversationId, typing }) => {
+        if (!conversationId) return;
+        socket.to(`org_${orgId}`).emit('inbox:typing', {
+            conversationId, userId, username, typing: !!typing,
+        });
+    });
+
     socket.on('disconnect', () => {
-        console.log(`User ${orgId} disconnected via socket`);
+        socket.to(`org_${orgId}`).emit('presence', { userId, username, online: false });
     });
 });
 

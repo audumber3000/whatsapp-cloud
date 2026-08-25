@@ -146,7 +146,32 @@ async function handle(userId, instance, msg) {
             `${contact.name || msg.from} replied: ${intent}`);
     }
 
+    // The conversation is the unit the team works on: it is what gets assigned,
+    // labelled and resolved. A reply re-opens it and resets the SLA clock, so
+    // "first response" measures this exchange rather than the whole history.
+    let conversation = null;
+    if (contact) {
+        conversation = await dbGet(
+            `INSERT INTO conversations
+               (org_id, contact_id, last_inbound_at, last_message_at, unread_count, status)
+             VALUES (?, ?, NOW(), NOW(), 1, 'open')
+             ON CONFLICT (org_id, contact_id) DO UPDATE
+               SET last_inbound_at   = NOW(),
+                   last_message_at   = NOW(),
+                   unread_count      = conversations.unread_count + 1,
+                   status            = CASE WHEN conversations.status = 'resolved'
+                                            THEN 'open' ELSE conversations.status END,
+                   resolved_at       = NULL,
+                   resolved_by       = NULL,
+                   first_response_at = NULL,
+                   updated_at        = NOW()
+             RETURNING id, status, assignee_id, unread_count`,
+            [userId, contact.id]
+        ).catch((e) => { console.error('[inbound] conversation upsert failed:', e.message); return null; });
+    }
+
     emitInbound(userId, {
+        conversation_id: conversation?.id || null,
         contact_id: contact?.id || null,
         name: contact?.name || null,
         from: msg.from,

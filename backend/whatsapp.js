@@ -36,7 +36,7 @@ const emitStatus = (userId) => {
         console.log(`[WA] io not ready, skipping emit for user ${userId}`);
         return;
     }
-    io.to(`user_${userId}`).emit('wa_status', status);
+    io.to(`org_${userId}`).emit('wa_status', status);
 };
 
 /**
@@ -240,7 +240,7 @@ const sendMediaByUrl = async (userId, phone, { url, caption = '', filename, mime
 
 const notifyUser = (userId, type, message) => {
     if (!io) return;
-    io.to(`user_${userId}`).emit('notification', {
+    io.to(`org_${userId}`).emit('notification', {
         type,
         message,
         timestamp: new Date().toISOString(),
@@ -255,7 +255,12 @@ const notifyUser = (userId, type, message) => {
 // Inbound replies land here. Wired once, at module load.
 inbound.wire({
     notifyUser: (uid, type, message) => notifyUser(uid, type, message),
-    emit: (uid, payload) => { if (io) io.to(`user_${uid}`).emit('inbound_message', payload); },
+    emit: (uid, payload) => {
+        if (!io) return;
+        // Everyone sharing the number sees the reply land, not just whoever
+        // happened to open it first.
+        io.to(`org_${uid}`).emit('inbound_message', payload);
+    },
 });
 hooks.onInbound((userId, instance, msg) => inbound.handle(userId, instance, msg));
 
@@ -277,7 +282,14 @@ const bootAll = async (userIds = []) => {
     state.startReconciler();
 };
 
+/** Fan an event out to everyone sharing this org's number. */
+const emitToOrg = (orgId, event, payload) => {
+    if (!io) return;
+    io.to(`org_${orgId}`).emit(event, payload);
+};
+
 module.exports = {
+    emitToOrg,
     sendMessage,
     sendMedia,
     disconnectClient,
