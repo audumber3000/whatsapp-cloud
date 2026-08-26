@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const notify = require('./notify');
 const path = require('path');
 const db = require('./db');
 const { sendMessage, sendMedia, notifyUser, getStatus, sendConfirmation, showTyping } = require('./whatsapp');
@@ -63,8 +64,11 @@ async function recordSendOutcome(orgId, ok) {
     db.run('INSERT INTO health_alerts (org_id, kind, detail) VALUES (?, ?, ?)',
         [orgId, 'send_failures', detail]);
 
-    const user = await new Promise((res) => db.get(
-        'SELECT username, email FROM users WHERE id = ?', [orgId], (e, r) => res(r)));
+    // This used to look up `users WHERE id = orgId` — an org id in a user id
+    // column, so it always found nobody and the alert emailed no one. The
+    // recipients live on the organisation, which notify.dispatch reads.
+    const org = await new Promise((res) => db.get(
+        'SELECT name FROM organisations WHERE id = ?', [orgId], (e, r) => res(r)));
 
     const status = getStatus(orgId);
     const cause = status.isConnected
@@ -73,7 +77,7 @@ async function recordSendOutcome(orgId, ok) {
 
     const subject = '⚠️ WA Reach: messages are failing';
     const body =
-        `${detail} for account "${user?.username || orgId}".\n\n` +
+        `${detail} for "${org?.name || orgId}".\n\n` +
         `${cause}\n\n` +
         `Nothing further will be delivered until this is fixed. ` +
         `Open WA Reach and check the connection status.`;
@@ -81,11 +85,16 @@ async function recordSendOutcome(orgId, ok) {
     console.error(`[ALERT] user ${orgId}: ${detail}. ${cause}`);
     notifyUser(orgId, 'error', `${detail} — check your WhatsApp connection`);
 
-    // Email is the channel that still works when WhatsApp is the thing broken.
-    for (const to of String(user?.email || '').split(',').map(e => e.trim()).filter(Boolean)) {
-        const sent = await sendEmail(to, subject, body);
-        logNotification(orgId, 'email', 'health_alert', to, detail, sent ? 'sent' : 'failed');
-    }
+    // Which of the two advertised events this actually is depends on why the
+    // sends failed. Both were previously filed as 'health_alert', a category
+    // no toggle on the settings page has ever matched.
+    const event = status.isConnected ? 'send_failure' : 'disconnected';
+    await notify.dispatch(orgId, event, {
+        subject,
+        body,
+        // No point WhatsApping someone to tell them WhatsApp is down.
+        sendWhatsApp: status.isConnected ? sendMessage : null,
+    });
 }
 
 
@@ -399,23 +408,13 @@ cron.schedule('* * * * *', () => {
                             if (!updateErr) {
                                 const startMsg = `🚀 *Automation Starting: ${auto.name}*\n\n🕒 *Window:* ${auto.start_time} - ${auto.end_time}\n📱 *Contact Count:* ${processedCount + pendingCount}\n\nI will send you a summary once all messages are dispatched.`;
                                 
-                                // WhatsApp (Handle multiple numbers)
-                                if (auto.personal_whatsapp_number) {
-                                    const numbers = auto.personal_whatsapp_number.split(',').map(n => n.trim()).filter(Boolean);
-                                    for (const num of numbers) {
-                                        const waSuccess = await sendMessage(auto.org_id, num, startMsg);
-                                        logNotification(auto.org_id, 'whatsapp', 'start_alert', num, startMsg, waSuccess ? 'sent' : 'failed');
-                                    }
-                                }
-                                
-                                // Email (Handle multiple emails)
-                                if (auto.user_email) {
-                                    const emails = auto.user_email.split(',').map(e => e.trim()).filter(Boolean);
-                                    for (const e of emails) {
-                                        const emailSuccess = await sendEmail(e, `🚀 Automation Starting: ${auto.name}`, startMsg);
-                                        logNotification(auto.org_id, 'email', 'start_alert', e, startMsg, emailSuccess ? 'sent' : 'failed');
-                                    }
-                                }
+                                // Routed through notify.dispatch so the Settings
+                                // toggles actually govern this, which they never did.
+                                await notify.dispatch(auto.org_id, 'start_alert', {
+                                    subject: `Automation starting: ${auto.name}`,
+                                    body: startMsg,
+                                    sendWhatsApp: sendMessage,
+                                });
 
                                 notifyUser(auto.org_id, 'info', `Started automation "${auto.name}"`);
                             }
@@ -435,23 +434,11 @@ cron.schedule('* * * * *', () => {
                             if (!updateErr) {
                                 const summaryMsg = `🏁 *Daily Summary: ${auto.name}*\n\n✅ Sent: ${stats.sentCount || 0}\n❌ Failed: ${stats.failedCount || 0}\n⏱️ Window: ${auto.start_time} to ${auto.end_time}\n\n📅 *Next Run:* ${nextRunStr}`;
                                 
-                                // WhatsApp
-                                if (auto.personal_whatsapp_number) {
-                                    const numbers = auto.personal_whatsapp_number.split(',').map(n => n.trim()).filter(Boolean);
-                                    for (const num of numbers) {
-                                        const waSuccess = await sendMessage(auto.org_id, num, summaryMsg);
-                                        logNotification(auto.org_id, 'whatsapp', 'daily_summary', num, summaryMsg, waSuccess ? 'sent' : 'failed');
-                                    }
-                                }
-                                
-                                // Email
-                                if (auto.user_email) {
-                                    const emails = auto.user_email.split(',').map(e => e.trim()).filter(Boolean);
-                                    for (const e of emails) {
-                                        const emailSuccess = await sendEmail(e, `🏁 Daily Summary: ${auto.name}`, summaryMsg);
-                                        logNotification(auto.org_id, 'email', 'daily_summary', e, summaryMsg, emailSuccess ? 'sent' : 'failed');
-                                    }
-                                }
+                                await notify.dispatch(auto.org_id, 'daily_summary', {
+                                    subject: `Daily summary: ${auto.name}`,
+                                    body: summaryMsg,
+                                    sendWhatsApp: sendMessage,
+                                });
 
                                 notifyUser(auto.org_id, 'success', `Sent summary for "${auto.name}"`);
                             }

@@ -17,6 +17,7 @@ const db = require('./db');
 const publicApi = require('./publicApi');
 const whatsapp = require('./whatsapp');
 const email = require('./email');
+const notify = require('./notify');
 
 /* ── audit ──────────────────────────────────────────────────────────────── */
 
@@ -67,15 +68,25 @@ function cleanHours(input) {
     return out;
 }
 
-const NOTIFY_EVENTS = ['daily_summary', 'start_alert', 'send_failure', 'new_reply', 'disconnected'];
+// The list and the defaults both live in notify.js, which is what actually
+// decides whether an alert goes out. Duplicating them here is how the page
+// ends up showing a state the sender does not agree with.
+const NOTIFY_EVENTS = Object.keys(notify.DEFAULTS);
 
-function cleanEvents(input) {
+/**
+ * Reading and writing are deliberately different.
+ *
+ * On READ, an event the workspace has never saved falls back to its default —
+ * otherwise the page shows every switch off while the system is still sending,
+ * which is worse than no page at all. On WRITE every event is stored
+ * explicitly, so a deliberate "off" is never re-defaulted back on.
+ */
+function cleanEvents(input, { applyDefaults = false } = {}) {
     const out = {};
     for (const e of NOTIFY_EVENTS) {
-        out[e] = {
-            email: !!input?.[e]?.email,
-            whatsapp: !!input?.[e]?.whatsapp,
-        };
+        const saved = input?.[e];
+        const base = applyDefaults && !saved ? notify.DEFAULTS[e] : saved;
+        out[e] = { email: !!base?.email, whatsapp: !!base?.whatsapp };
     }
     return out;
 }
@@ -323,7 +334,7 @@ function router({ authenticateToken, requireRole }) {
             res.json({
                 emails: o?.notify_emails || '',
                 whatsapp: o?.notify_whatsapp || '',
-                events: cleanEvents(o?.notify_events),
+                events: cleanEvents(o?.notify_events, { applyDefaults: true }),
                 available: NOTIFY_EVENTS,
             });
         } catch (e) {

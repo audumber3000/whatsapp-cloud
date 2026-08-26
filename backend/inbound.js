@@ -236,6 +236,19 @@ async function handle(userId, instance, msg) {
     // Outside business hours, say so rather than leaving them wondering.
     await maybeSendAway(userId, conversation, msg.from);
 
+    // "New reply" is offered on the Settings page and had no sender anywhere —
+    // the toggle could never have done anything. Off by default, because a busy
+    // clinic would get dozens a day and they are already visible in the Inbox.
+    if (intent !== 'opt_out') {
+        const who = contact?.name && contact.name !== 'Unknown' ? contact.name : `+${msg.from}`;
+        const preview = (msg.text || `[${msg.mediaType || 'message'}]`).slice(0, 300);
+        await require('./notify').dispatch(userId, 'new_reply', {
+            subject: `New WhatsApp reply from ${who}`,
+            body: `${who} replied:\n\n"${preview}"\n\nOpen the Inbox to answer.`,
+            sendWhatsApp: hooks.sendAway,
+        }).catch(() => {});
+    }
+
     emitInbound(userId, {
         conversation_id: conversation?.id || null,
         contact_id: contact?.id || null,
