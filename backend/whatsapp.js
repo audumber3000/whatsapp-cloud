@@ -298,7 +298,23 @@ hooks.onMessageStatus('user', (userId, messageId, status) => {
          SET delivery_status = ?,
              delivered_at = CASE WHEN ? IN ('delivered','read') THEN NOW() ELSE delivered_at END
          WHERE wa_message_id = ?`,
-        [status, status, messageId]
+        [status, status, messageId],
+        function (err) {
+            if (err || !this.changes) return;
+            // Two ticks and blue ticks are the events an integrator actually
+            // waits on — "did the reminder land, and did they look at it".
+            if (status !== 'delivered' && status !== 'read') return;
+            db.get(
+                'SELECT org_id, contact_id, id FROM automation_logs WHERE wa_message_id = ?',
+                [messageId],
+                (e, row) => {
+                    if (e || !row) return;
+                    require('./webhooks').emit(row.org_id, `message.${status}`, {
+                        message_id: messageId, log_id: row.id,
+                        contact_id: row.contact_id, status,
+                    }).catch(() => {});
+                });
+        }
     );
 });
 

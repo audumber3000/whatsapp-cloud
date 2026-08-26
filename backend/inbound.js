@@ -233,6 +233,24 @@ async function handle(userId, instance, msg) {
         ).catch((e) => { console.error('[inbound] conversation upsert failed:', e.message); return null; });
     }
 
+    // The event the whole feature exists for: a patient tapped Confirm or
+    // Cancel and the system that booked the appointment needs to know.
+    const webhooks = require('./webhooks');
+    await webhooks.emit(userId, 'message.replied', {
+        contact_id: contact?.id || null,
+        conversation_id: conversation?.id || null,
+        from: msg.from,
+        name: contact?.name || null,
+        body: msg.text || '',
+        intent,
+        media_type: msg.mediaType || null,
+    }).catch(() => {});
+    if (intent === 'opt_out' && contact) {
+        await webhooks.emit(userId, 'contact.opted_out', {
+            contact_id: contact.id, phone: msg.from, name: contact.name || null,
+        }).catch(() => {});
+    }
+
     // Outside business hours, say so rather than leaving them wondering.
     await maybeSendAway(userId, conversation, msg.from);
 

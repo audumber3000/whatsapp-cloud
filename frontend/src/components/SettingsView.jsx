@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Building2, Users, MessageCircle, Bell, KeyRound, ScrollText, CreditCard,
     Tag as TagIcon, Plus, Trash2, Copy, Check, AlertTriangle, Mail, Clock,
-    ShieldCheck, X,
+    ShieldCheck, X, Webhook, Send, RefreshCw,
 } from 'lucide-react';
 import Modal from './ui/Modal';
 import { useConfirm } from './ui/ConfirmDialog';
@@ -27,6 +27,7 @@ const SECTIONS = [
     { key: 'notifications', label: 'Notifications', Icon: Bell },
     { key: 'tags', label: 'Tags & labels', Icon: TagIcon },
     { key: 'api', label: 'API keys', Icon: KeyRound },
+    { key: 'webhooks', label: 'Webhooks', Icon: Webhook },
     { key: 'audit', label: 'Audit log', Icon: ScrollText },
     { key: 'billing', label: 'Plan & usage', Icon: CreditCard },
 ];
@@ -87,6 +88,7 @@ export default function SettingsView({ apiUrl, token, onToast: rawToast, role })
                     {section === 'notifications' && <Notifications {...props} />}
                     {section === 'tags' && <TagsAndLabels {...props} />}
                     {section === 'api' && <ApiKeys {...props} />}
+                    {section === 'webhooks' && <Webhooks {...props} />}
                     {section === 'audit' && <AuditLog {...props} />}
                     {section === 'billing' && <Billing {...props} />}
                 </div>
@@ -767,6 +769,234 @@ function ApiKeys({ apiUrl, auth, jsonHeaders, onToast, canManage }) {
 
             <Modal open={!!fresh} onClose={() => setFresh(null)} size="md" title="Copy this key now"
                 description="This is the only time it is shown. Only a hash is stored, so it genuinely cannot be recovered."
+                footer={<button className="btn-primary" onClick={() => setFresh(null)}>I have saved it</button>}>
+                <CopyField value={fresh || ''} onToast={onToast} />
+            </Modal>
+        </>
+    );
+}
+
+
+/* ── outbound webhooks ──────────────────────────────────────────────────── */
+const EVENT_HELP = {
+    'message.sent': 'A message was handed to WhatsApp.',
+    'message.delivered': 'Two ticks — it reached their phone.',
+    'message.read': 'Blue ticks — they opened it.',
+    'message.failed': 'It never went out.',
+    'message.replied': 'They wrote back. Carries the parsed intent, so a Cancel is actionable.',
+    'contact.opted_out': 'They asked to stop. Honour it on your side too.',
+};
+
+function Webhooks({ apiUrl, auth, jsonHeaders, onToast, canManage }) {
+    const [data, setData] = useState(null);
+    const [adding, setAdding] = useState(false);
+    const [form, setForm] = useState({ name: '', url: '', events: [] });
+    const [fresh, setFresh] = useState(null);
+    const confirm = useConfirm();
+
+    const load = useCallback(() => {
+        fetch(`${apiUrl}/settings/webhooks`, { headers: auth })
+            .then((r) => r.json()).then(setData).catch(() => onToast('error', 'Could not load webhooks'));
+    }, [apiUrl, auth, onToast]);
+    useEffect(() => { load(); }, [load]);
+
+    if (!data) return <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
+
+    const create = async () => {
+        const r = await fetch(`${apiUrl}/settings/webhooks`, {
+            method: 'POST', headers: jsonHeaders, body: JSON.stringify(form),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return onToast('error', d.error || 'Could not create that endpoint');
+        setAdding(false); setForm({ name: '', url: '', events: [] });
+        setFresh(d.secret); load();
+    };
+
+    const toggle = async (ep) => {
+        const r = await fetch(`${apiUrl}/settings/webhooks/${ep.id}`, {
+            method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ active: !ep.active }),
+        });
+        if (!r.ok) return onToast('error', 'Could not update that endpoint');
+        load();
+    };
+
+    const remove = async (ep) => {
+        const ok = await confirm({
+            title: `Delete "${ep.name}"?`,
+            body: 'Anything relying on these events stops being told. Queued deliveries go with it.',
+            confirmLabel: 'Delete', danger: true,
+        });
+        if (!ok) return;
+        await fetch(`${apiUrl}/settings/webhooks/${ep.id}`, { method: 'DELETE', headers: auth });
+        load();
+    };
+
+    const test = async (ep) => {
+        const r = await fetch(`${apiUrl}/settings/webhooks/${ep.id}/test`, { method: 'POST', headers: auth });
+        onToast(r.ok ? 'success' : 'error',
+            r.ok ? 'Test queued — it goes out on the next sweep, within a minute.' : 'Could not queue a test');
+    };
+
+    return (
+        <>
+            <Section title="Outbound webhooks"
+                sub="Where WA Reach tells your other systems what happened — a reply, a delivery, an opt-out."
+                footer={canManage && (
+                    <button className="btn-primary" onClick={() => setAdding(true)}>
+                        <Plus size={15} /> Add endpoint
+                    </button>
+                )}>
+                {data.endpoints.length === 0 ? (
+                    <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>
+                        Nothing configured. Without an endpoint, a patient tapping Cancel never
+                        reaches the system that booked the appointment.
+                    </p>
+                ) : (
+                    <div className="member-list">
+                        {data.endpoints.map((ep) => (
+                            <div className="member-row" key={ep.id} style={{ alignItems: 'flex-start' }}>
+                                <span className={`conn-dot${ep.active && ep.consecutive_fails === 0 ? ' on' : ''}`}
+                                      style={{ marginTop: 6 }} />
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div style={{ fontWeight: 600, fontSize: 14 }}>
+                                        {ep.name}
+                                        {!ep.active && (
+                                            <span className="badge badge-prose badge-cancelled" style={{ marginLeft: 7 }}>
+                                                Off
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div style={{ fontSize: 12.5, color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+                                        {ep.url}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>
+                                        {ep.events?.length ? `${ep.events.length} event types` : 'All events'}
+                                        {ep.last_success_at && ` · last ok ${when(ep.last_success_at)}`}
+                                        {ep.consecutive_fails > 0 && (
+                                            <span style={{ color: 'var(--danger)' }}>
+                                                {' '}· {ep.consecutive_fails} failures in a row
+                                            </span>
+                                        )}
+                                    </div>
+                                    {ep.last_error && ep.consecutive_fails > 0 && (
+                                        <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 3 }}>
+                                            {ep.last_error}
+                                        </div>
+                                    )}
+                                </div>
+                                {canManage && (
+                                    <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
+                                        <button className="btn-outline btn-sm" onClick={() => test(ep)}>
+                                            <Send size={13} /> Test
+                                        </button>
+                                        <button className="btn-outline btn-sm" onClick={() => toggle(ep)}>
+                                            {ep.active ? 'Disable' : 'Enable'}
+                                        </button>
+                                        <button className="icon-btn" onClick={() => remove(ep)}
+                                                style={{ color: 'var(--danger)' }} title="Delete">
+                                            <Trash2 size={15} />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </Section>
+
+            <Section title="Verifying a delivery"
+                     sub="Every request is signed. Check it before trusting the body.">
+                <pre className="code-block"><code>{`// The timestamp is inside the signed material, so a captured
+// delivery cannot be replayed later.
+const expected = 'sha256=' + crypto
+  .createHmac('sha256', YOUR_SECRET)
+  .update(req.headers['x-wareach-timestamp'] + '.' + rawBody)
+  .digest('hex');
+
+crypto.timingSafeEqual(
+  Buffer.from(req.headers['x-wareach-signature']),
+  Buffer.from(expected));`}</code></pre>
+                <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 8 }}>
+                    Reject anything whose timestamp is more than a few minutes old. Retries use
+                    5m, 30m, 2h then 6h, so a receiver down for an hour still gets the event.
+                </p>
+            </Section>
+
+            {data.deliveries.length > 0 && (
+                <Section title="Recent deliveries" sub="The last 50, newest first.">
+                    <div className="tablewrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                        <table className="logs-table">
+                            <thead>
+                                <tr><th>Event</th><th style={{ width: 110 }}>Result</th>
+                                    <th style={{ width: 150 }}>When</th><th>Detail</th></tr>
+                            </thead>
+                            <tbody>
+                                {data.deliveries.map((d) => (
+                                    <tr key={d.id}>
+                                        <td><code style={{ fontSize: 12 }}>{d.event}</code></td>
+                                        <td>
+                                            <span className={`badge badge-prose ${
+                                                d.status === 'delivered' ? 'badge-delivered'
+                                                : d.status === 'failed' ? 'badge-failed' : 'badge-pending'}`}>
+                                                {d.status === 'pending' && d.attempts > 0
+                                                    ? `Retry ${d.attempts}` : d.status}
+                                            </span>
+                                        </td>
+                                        <td className="log-time">{when(d.delivered_at || d.created_at)}</td>
+                                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                            {d.error || (d.response_status ? `HTTP ${d.response_status}` : '—')}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </Section>
+            )}
+
+            <Modal open={adding} onClose={() => setAdding(false)} size="md" title="Add an endpoint"
+                description="Leave the events unticked to receive all of them, including any added later."
+                footer={<>
+                    <button className="btn-outline" onClick={() => setAdding(false)}>Cancel</button>
+                    <button className="btn-primary" onClick={create} disabled={!form.name.trim() || !form.url.trim()}>
+                        Create
+                    </button>
+                </>}>
+                <div className="form-group">
+                    <label htmlFor="wh-name">Name</label>
+                    <input id="wh-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                           placeholder="MolarPlus production" />
+                </div>
+                <div className="form-group">
+                    <label htmlFor="wh-url">URL</label>
+                    <input id="wh-url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })}
+                           placeholder="https://api.molarplus.com/hooks/wareach" />
+                    <small>Must be publicly reachable. Private and internal addresses are refused.</small>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Events</label>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                        {(data.available || []).map((e) => (
+                            <label className="toggle-row" key={e} style={{ padding: '7px 9px' }}>
+                                <input type="checkbox" checked={form.events.includes(e)}
+                                       onChange={() => setForm({
+                                           ...form,
+                                           events: form.events.includes(e)
+                                               ? form.events.filter((x) => x !== e)
+                                               : [...form.events, e],
+                                       })} />
+                                <span>
+                                    <strong style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{e}</strong>
+                                    <small>{EVENT_HELP[e]}</small>
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal open={!!fresh} onClose={() => setFresh(null)} size="md" title="Copy this signing secret"
+                description="Shown once. Your receiver needs it to verify the signature; we only ever compute with it."
                 footer={<button className="btn-primary" onClick={() => setFresh(null)}>I have saved it</button>}>
                 <CopyField value={fresh || ''} onToast={onToast} />
             </Modal>

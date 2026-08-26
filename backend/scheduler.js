@@ -160,6 +160,10 @@ cron.schedule('* * * * *', () => {
     require('./broadcasts').processDue().catch((e) =>
         console.error('[scheduler] broadcast sweep failed:', e.message));
 
+    // Outbound webhooks waiting to go, including retries.
+    require('./webhooks').processDue().catch((e) =>
+        console.error('[scheduler] webhook sweep failed:', e.message));
+
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -294,6 +298,16 @@ cron.schedule('* * * * *', () => {
 
               // Update the log status and content
               const newStatus = overallSuccess ? 'delivered' : 'failed';
+              // Tell whoever integrated with us. Never awaited into the send
+              // path's success: a webhook must not change whether we recorded
+              // the message correctly.
+              require('./webhooks').emit(org_id,
+                  overallSuccess ? 'message.sent' : 'message.failed',
+                  {
+                      message_id: typeof lastMessageId === 'string' ? lastMessageId : null,
+                      log_id, automation: auto_name, to: phone, contact_id,
+                      status: newStatus,
+                  }).catch(() => {});
               const logReason = overallSuccess ? null : 'Failed to reach WhatsApp client or failure in dispatch sequence';
               const sentContent = messageBlocks.map(b => {
                   const firstVar = (b.variations && b.variations[0]) ? b.variations[0] : '';

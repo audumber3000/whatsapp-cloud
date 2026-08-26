@@ -18,6 +18,7 @@ const publicApi = require('./publicApi');
 const whatsapp = require('./whatsapp');
 const email = require('./email');
 const notify = require('./notify');
+const webhooks = require('./webhooks');
 
 /* ── audit ──────────────────────────────────────────────────────────────── */
 
@@ -481,6 +482,121 @@ function router({ authenticateToken, requireRole }) {
             res.json({ plan: org?.plan || 'free', since: org?.created_at, usage, enforced: false });
         } catch (e) {
             res.status(500).json({ error: 'Could not load billing' });
+        }
+    });
+
+    /* ---- outbound webhooks ---- */
+    r.get('/webhooks', async (req, res) => {
+        try {
+            const [endpoints, recent] = await Promise.all([
+                db.many(
+                    `SELECT id, name, url, events, active, last_success_at, last_failure_at,
+                            last_error, consecutive_fails, created_at
+                       FROM webhook_endpoints WHERE org_id = ? ORDER BY created_at DESC`,
+                    [req.user.org_id]),
+                db.many(
+                    `SELECT d.id, d.event, d.status, d.attempts, d.response_status, d.error,
+                            d.created_at, d.delivered_at, e.name AS endpoint_name
+                       FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id
+                      WHERE d.org_id = ? ORDER BY d.created_at DESC LIMIT 50`,
+                    [req.user.org_id]),
+            ]);
+            res.json({ endpoints, deliveries: recent, available: webhooks.EVENTS });
+        } catch (e) {
+            console.error('[settings] webhooks failed:', e.message);
+            res.status(500).json({ error: 'Could not load webhooks' });
+        }
+    });
+
+    r.post('/webhooks', requireRole('manager'), async (req, res) => {
+        const name = String(req.body?.name || '').trim().slice(0, 60) || 'Untitled';
+        const check = await webhooks.validateUrl(String(req.body?.url || ''));
+        if (!check.ok) return res.status(400).json({ error: check.error });
+
+        const events = Array.isArray(req.body?.events)
+            ? req.body.events.filter((e) => webhooks.EVENTS.includes(e)) : [];
+        try {
+            // Generated here, shown once. The receiver needs it to verify the
+            // signature; we only ever need to compute with it.
+            const secret = 'whsec_' + crypto.randomBytes(24).toString('base64url');
+            const row = await db.one(
+                `INSERT INTO webhook_endpoints (org_id, name, url, secret, events, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 RETURNING id, name, url, events, active, created_at`,
+                [req.user.org_id, name, check.url, secret, JSON.stringify(events), req.user.id]);
+            audit(req, 'webhook.create', 'webhook', row.id, null, { name, url: check.url, events });
+            res.json({ ...row, secret });
+        } catch (e) {
+            console.error('[settings] webhook create failed:', e.message);
+            res.status(500).json({ error: 'Could not create that endpoint' });
+        }
+    });
+
+    r.patch('/webhooks/:id', requireRole('manager'), async (req, res) => {
+        try {
+            const own = await db.one('SELECT id FROM webhook_endpoints WHERE id = ? AND org_id = ?',
+                [req.params.id, req.user.org_id]);
+            if (!own) return res.status(404).json({ error: 'Endpoint not found' });
+
+            const patch = {};
+            if (req.body?.active !== undefined) patch.active = !!req.body.active;
+            if (Array.isArray(req.body?.events)) {
+                patch.events = req.body.events.filter((e) => webhooks.EVENTS.includes(e));
+            }
+            if (patch.active) {
+                // Re-enabling clears the failure streak, or it would switch
+                // itself off again on the next error.
+                await db.query(
+                    `UPDATE webhook_endpoints SET active = TRUE, consecutive_fails = 0, updated_at = NOW()
+                      WHERE id = ?`, [req.params.id]);
+            } else if (patch.active === false) {
+                await db.query('UPDATE webhook_endpoints SET active = FALSE, updated_at = NOW() WHERE id = ?',
+                    [req.params.id]);
+            }
+            if (patch.events) {
+                await db.query('UPDATE webhook_endpoints SET events = ?, updated_at = NOW() WHERE id = ?',
+                    [JSON.stringify(patch.events), req.params.id]);
+            }
+            audit(req, 'webhook.update', 'webhook', req.params.id, null, patch);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: 'Could not update that endpoint' });
+        }
+    });
+
+    r.delete('/webhooks/:id', requireRole('manager'), async (req, res) => {
+        try {
+            const q = await db.query('DELETE FROM webhook_endpoints WHERE id = ? AND org_id = ?',
+                [req.params.id, req.user.org_id]);
+            if (!q.rowCount) return res.status(404).json({ error: 'Endpoint not found' });
+            audit(req, 'webhook.delete', 'webhook', req.params.id, null, null);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: 'Could not delete that endpoint' });
+        }
+    });
+
+    /** Fire a sample event, so an integrator can verify their signature check. */
+    r.post('/webhooks/:id/test', requireRole('manager'), async (req, res) => {
+        try {
+            const ep = await db.one('SELECT id FROM webhook_endpoints WHERE id = ? AND org_id = ?',
+                [req.params.id, req.user.org_id]);
+            if (!ep) return res.status(404).json({ error: 'Endpoint not found' });
+            await db.query(
+                `INSERT INTO webhook_deliveries (endpoint_id, org_id, event, payload)
+                 VALUES (?, ?, 'message.delivered', ?)`,
+                [ep.id, req.user.org_id, JSON.stringify({
+                    event: 'message.delivered',
+                    occurred_at: new Date().toISOString(),
+                    org_id: req.user.org_id,
+                    test: true,
+                    data: { message_id: 'test', to: '910000000000', status: 'delivered' },
+                })]);
+            // Delivered on the next sweep rather than inline, so a slow
+            // receiver cannot hold this request open.
+            res.json({ queued: true });
+        } catch (e) {
+            res.status(500).json({ error: 'Could not queue a test' });
         }
     });
 
