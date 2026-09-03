@@ -849,7 +849,7 @@ app.post('/api/automations', authenticateToken, (req, res) => {
                 clientBaseDate.setUTCHours(startH, startM, 0, 0);
             }
 
-            while (!daysArray.includes(clientBaseDate.getDay())) {
+            while (!daysArray.includes(clientBaseDate.getUTCDay())) {
                 clientBaseDate.setUTCDate(clientBaseDate.getUTCDate() + 1);
                 clientBaseDate.setUTCHours(startH, startM, 0, 0);
             }
@@ -1019,7 +1019,7 @@ app.put('/api/automations/:id', authenticateToken, (req, res) => {
                         clientBaseDate.setUTCHours(startH, startM, 0, 0);
                     }
 
-                    while (!daysArray.includes(clientBaseDate.getDay())) {
+                    while (!daysArray.includes(clientBaseDate.getUTCDay())) {
                         clientBaseDate.setUTCDate(clientBaseDate.getUTCDate() + 1);
                         clientBaseDate.setUTCHours(startH, startM, 0, 0);
                     }

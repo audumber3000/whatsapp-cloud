@@ -341,7 +341,7 @@ cron.schedule('* * * * *', () => {
                       clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
                       clientNextDate.setUTCHours(startH, startM, 0, 0);
 
-                      while (!daysArray.includes(clientNextDate.getDay())) {
+                      while (!daysArray.includes(clientNextDate.getUTCDay())) {
                           clientNextDate.setUTCDate(clientNextDate.getUTCDate() + 1);
                       }
 
