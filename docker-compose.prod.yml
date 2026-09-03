@@ -14,11 +14,16 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./backend/data:/app/backend/data          # SQLite lives here
+      - ./backend/data:/app/backend/data          # legacy SQLite file, kept for rollback
       - ./backend/uploads:/app/backend/uploads    # media attachments
+      - ./backend/sessions:/app/backend/sessions  # Evolution pairing state
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # WA Reach runs on Postgres. Without this the app refuses to boot
+      # (backend/db.js exits 1), which is exactly what this file used to do.
+      # Same instance as Evolution, separate database and role.
+      - DATABASE_URL=postgresql://wareach:${WAREACH_DB_PASSWORD}@postgres:5432/wareach
       # Evolution is reached by service name on the internal network.
       - EVOLUTION_URL=http://evolution:8080
       - EVOLUTION_API_KEY=${AUTHENTICATION_API_KEY}
@@ -43,6 +48,10 @@ services:
       - EMAIL_FROM=${EMAIL_FROM}
     depends_on:
       evolution:
+        condition: service_healthy
+      # The app now runs its own migrations at boot, so Postgres has to be
+      # accepting connections before the container starts, not just Evolution.
+      postgres:
         condition: service_healthy
 
   # ── Evolution API (WhatsApp transport) ──────────────────────────────────────
@@ -92,16 +101,23 @@ services:
       retries: 10
       start_period: 45s
 
-  # ── Postgres (Evolution's store only — WA Reach still uses SQLite) ──────────
+  # ── Postgres (serves both Evolution and WA Reach) ───────────────────────────
+  # One instance, two databases: `evolution` (created by the image) and
+  # `wareach` (created by the init script below, on a fresh volume only).
   postgres:
     image: postgres:16
     restart: unless-stopped
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Runs once, when the data directory is empty. See the script's header
+      # for what to do on a box that already has an Evolution database.
+      - ./ops/postgres-init:/docker-entrypoint-initdb.d:ro
     environment:
       - POSTGRES_USER=evolution
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=evolution
+      # Read by 10-wareach-db.sh to create WA Reach's own role.
+      - WAREACH_DB_PASSWORD=${WAREACH_DB_PASSWORD}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
       interval: 10s

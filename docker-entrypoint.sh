@@ -23,4 +23,14 @@ else
   echo "[entrypoint] no volume mount path set — using image-local dirs"
 fi
 
+# Apply any pending schema migrations before the app opens a port.
+#
+# Nothing ran these on deploy before, so a fresh box booted against an empty
+# database and every query failed. migrate.js is idempotent — already-applied
+# files are skipped — so this is safe on every restart, not just the first.
+# Failing here is deliberate: serving traffic on a half-migrated schema is
+# worse than not starting.
+echo "[entrypoint] applying database migrations"
+node migrate.js
+
 exec node server.js

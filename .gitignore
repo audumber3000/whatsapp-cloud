@@ -3,6 +3,9 @@ node_modules/
 dist/
 .env
 .env.*
+# ...but the templates that document what those files must contain are not secrets.
+!.env.example
+!.env.prod.example
 
 # Backend specific
 backend/data/
