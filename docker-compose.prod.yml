@@ -95,7 +95,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ >/dev/null || exit 1"]
+      # curl is not installed in this image, so the previous check failed on
+      # every probe no matter how healthy Evolution was — and `depends_on:
+      # service_healthy` turned that into "the app never starts at all".
+      # node is always present: it is what Evolution itself runs on.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 10
