@@ -127,6 +127,47 @@ fi
 log "Starting the stack"
 $COMPOSE up -d
 
+# ── 7b. WA Reach's database ─────────────────────────────────────────────────
+# ops/postgres-init runs ONLY when the data directory is empty, so a box that
+# first came up before that script existed has an `evolution` database and
+# nothing else — and re-running this deploy does not repair it, because the
+# volume is no longer empty. The app exits 1 when it cannot reach its own
+# database, so that gap looks exactly like "the deploy failed".
+#
+# Reconcile it here instead. Idempotent: safe on a fresh box where the init
+# script already did the work, and on one that has been running for months.
+log "Checking WA Reach's database and role"
+DB_PW="$(grep '^WAREACH_DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
+[ -n "$DB_PW" ] || die "WAREACH_DB_PASSWORD is empty in $ENV_FILE"
+psql_evo() { $COMPOSE exec -T postgres psql -U evolution -d evolution "$@"; }
+
+if [ -n "$(psql_evo -tAc "SELECT 1 FROM pg_roles WHERE rolname='wareach'" 2>/dev/null)" ]; then
+    # Re-assert the password so .env.prod stays the single source of truth;
+    # a regenerated secrets file would otherwise fail authentication forever.
+    psql_evo -c "ALTER ROLE wareach LOGIN PASSWORD '${DB_PW}'" >/dev/null
+    echo "    role 'wareach' present, password re-asserted"
+else
+    psql_evo -c "CREATE ROLE wareach LOGIN PASSWORD '${DB_PW}'" >/dev/null
+    echo "    role 'wareach' created"
+    DB_REPAIRED=1
+fi
+
+if [ -n "$(psql_evo -tAc "SELECT 1 FROM pg_database WHERE datname='wareach'" 2>/dev/null)" ]; then
+    echo "    database 'wareach' present"
+else
+    psql_evo -c "CREATE DATABASE wareach OWNER wareach" >/dev/null
+    echo "    database 'wareach' created"
+    DB_REPAIRED=1
+fi
+
+# If we just built the database under it, the app is mid restart-loop with a
+# failed migration behind it. Give it a clean start rather than waiting out
+# the backoff.
+if [ "${DB_REPAIRED:-0}" = "1" ]; then
+    log "Restarting the app against its repaired database"
+    $COMPOSE restart wareach
+fi
+
 log "Waiting for the app to become healthy"
 for i in $(seq 1 60); do
     if curl -fsS --max-time 3 http://localhost:3000/api/health >/dev/null 2>&1; then
