@@ -131,7 +131,11 @@ if grep -q '^ADMIN_PASSWORD_HASH=$' "$ENV_FILE"; then
         # `|| HASH=""` matters — with `set -o pipefail` a failure here used to
         # abort the whole deploy silently, mid-run, with stderr sent to
         # /dev/null and the stack never started.
-        IMG="$($COMPOSE config --images wareach 2>/dev/null | head -1)"
+        # Must match the `image:` pinned on the wareach service in
+        # docker-compose.prod.yml. `config --images wareach` is not a
+        # substitute: it ignores the service argument and prints every image
+        # in the file, so taking the first line picked up postgres:16.
+        IMG="wareach-app:local"
         HASH="$(docker run --rm -e ADMIN_PW="$ADMIN_PW" --entrypoint node "$IMG" \
             -e 'process.stdout.write(require("bcrypt").hashSync(process.env.ADMIN_PW,10))' \
             2>/dev/null | tr -d '\r\n')" || HASH=""

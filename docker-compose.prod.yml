@@ -10,6 +10,10 @@ services:
   # ── WA Reach app ────────────────────────────────────────────────────────────
   wareach:
     build: .
+    # Pinned so the image has a stable name. Without it compose derives one
+    # from the directory, and `config --images` cannot be filtered down to a
+    # single service — it lists every image in the file, in no useful order.
+    image: wareach-app:local
     restart: unless-stopped
     ports:
       - "3000:3000"
