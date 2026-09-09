@@ -120,10 +120,21 @@ if grep -q '^ADMIN_PASSWORD_HASH=$' "$ENV_FILE"; then
         echo
     fi
     if [ -n "${ADMIN_PW:-}" ]; then
-        HASH="$(ADMIN_PW="$ADMIN_PW" $COMPOSE run --rm --no-deps -T \
-            -e ADMIN_PW wareach \
-            node -e 'process.stdout.write(require("bcrypt").hashSync(process.env.ADMIN_PW,10))' \
-            2>/dev/null | tr -d '\r\n')"
+        # `docker compose run` cannot do this job. Its flag parser keeps reading
+        # flags past the service name, so the `-e` meant for node is swallowed
+        # as another env-var flag; the service's CMD then runs migrations
+        # against a database --no-deps has deliberately not started, and the
+        # step dies on "getaddrinfo ENOTFOUND postgres".
+        #
+        # Run the built image directly instead: the docker CLI stops parsing
+        # flags at the image name, and --entrypoint skips the migration script.
+        # `|| HASH=""` matters — with `set -o pipefail` a failure here used to
+        # abort the whole deploy silently, mid-run, with stderr sent to
+        # /dev/null and the stack never started.
+        IMG="$($COMPOSE config --images wareach 2>/dev/null | head -1)"
+        HASH="$(docker run --rm -e ADMIN_PW="$ADMIN_PW" --entrypoint node "$IMG" \
+            -e 'process.stdout.write(require("bcrypt").hashSync(process.env.ADMIN_PW,10))' \
+            2>/dev/null | tr -d '\r\n')" || HASH=""
         case "$HASH" in
             \$2*) sed -i "s|^ADMIN_PASSWORD_HASH=$|ADMIN_PASSWORD_HASH=${HASH}|" "$ENV_FILE"
                   echo "    hash written to .env.prod" ;;
