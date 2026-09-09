@@ -107,10 +107,19 @@ $COMPOSE build wareach
 # Hashed with the same bcrypt build the app verifies against, so there is no
 # chance of a $2y$/$2b$ mismatch between generator and verifier.
 if grep -q '^ADMIN_PASSWORD_HASH=$' "$ENV_FILE"; then
-    log "Set the master admin password"
-    echo "    (leave blank to skip — the admin panel stays disabled)"
-    read -rsp "    Password: " ADMIN_PW; echo
-    if [ -n "$ADMIN_PW" ]; then
+    # Prompt only when there is a real terminal to prompt on. Under the
+    # documented `curl … | bash` invocation stdin IS this script, so a bare
+    # read would swallow the rest of the file; over a non-interactive ssh it
+    # hits EOF, returns non-zero, and `set -e` aborts the deploy outright.
+    # Either way the failure lands mid-run, after the image has been built.
+    # ADMIN_PW may also be supplied by the environment for an unattended run.
+    if [ -z "${ADMIN_PW:-}" ] && [ -t 0 ]; then
+        log "Set the master admin password"
+        echo "    (leave blank to skip — the admin panel stays disabled)"
+        read -rsp "    Password: " ADMIN_PW || ADMIN_PW=""
+        echo
+    fi
+    if [ -n "${ADMIN_PW:-}" ]; then
         HASH="$(ADMIN_PW="$ADMIN_PW" $COMPOSE run --rm --no-deps -T \
             -e ADMIN_PW wareach \
             node -e 'process.stdout.write(require("bcrypt").hashSync(process.env.ADMIN_PW,10))' \
@@ -120,6 +129,9 @@ if grep -q '^ADMIN_PASSWORD_HASH=$' "$ENV_FILE"; then
                   echo "    hash written to .env.prod" ;;
             *)    echo "    could not generate a hash — set ADMIN_PASSWORD_HASH by hand" ;;
         esac
+    else
+        echo "    no admin password set — the admin panel stays disabled"
+        echo "    (re-run with ADMIN_PW=yourpassword to enable it)"
     fi
 fi
 
