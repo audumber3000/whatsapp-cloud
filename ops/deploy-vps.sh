@@ -140,8 +140,15 @@ if grep -q '^ADMIN_PASSWORD_HASH=$' "$ENV_FILE"; then
             -e 'process.stdout.write(require("bcrypt").hashSync(process.env.ADMIN_PW,10))' \
             2>/dev/null | tr -d '\r\n')" || HASH=""
         case "$HASH" in
-            \$2*) sed -i "s|^ADMIN_PASSWORD_HASH=$|ADMIN_PASSWORD_HASH=${HASH}|" "$ENV_FILE"
-                  echo "    hash written to .env.prod" ;;
+            \$2*) # Compose interpolates the file it is handed with --env-file,
+                  # so a bcrypt hash's `$2b$10$<salt>` reads as three variable
+                  # references. They expand to nothing, and a 60-character hash
+                  # arrives in the container as 43 — every admin login then
+                  # fails against a hash that looks plausible in .env.prod.
+                  # Doubling the dollars makes interpolation yield the literal.
+                  ESC="$(printf '%s' "$HASH" | sed 's/\$/$$/g')"
+                  sed -i "s|^ADMIN_PASSWORD_HASH=$|ADMIN_PASSWORD_HASH=${ESC}|" "$ENV_FILE"
+                  echo "    hash written to .env.prod (dollars escaped for compose)" ;;
             *)    echo "    could not generate a hash — set ADMIN_PASSWORD_HASH by hand" ;;
         esac
     else
