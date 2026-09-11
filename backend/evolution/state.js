@@ -36,6 +36,21 @@ function instances() {
     return Array.from(cache.keys());
 }
 
+/**
+ * Connected/total across known instances — the shape /api/health reports.
+ *
+ * This lives here because instances() returns NAMES, and every caller that
+ * forgot that wrote `instances().filter(s => s.isConnected)`, which matches
+ * nothing and silently reports zero connected phones forever.
+ */
+function summary() {
+    const names = instances();
+    return {
+        connected: names.filter((n) => get(n).isConnected).length,
+        total: names.length,
+    };
+}
+
 /** Merge a partial update and notify listeners if anything actually changed. */
 function update(instanceName, patch) {
     const prev = cache.get(instanceName) || { ...EMPTY };
@@ -138,6 +153,6 @@ function stopReconciler() {
 }
 
 module.exports = {
-    get, has, instances, update, remove, onChange,
+    get, has, instances, summary, update, remove, onChange,
     seed, startReconciler, stopReconciler, normalizeOwner,
 };

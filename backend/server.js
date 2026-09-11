@@ -65,11 +65,10 @@ app.get('/api/health', async (req, res) => {
         fatal = true;
     }
     try {
-        const list = require('./evolution/state').instances() || [];
-        const connected = list.filter((s) => s.isConnected).length;
-        out.whatsapp = `${connected}/${list.length} connected`;
+        const { connected, total } = require('./evolution/state').summary();
+        out.whatsapp = `${connected}/${total} connected`;
         // A box with instances but none paired is up, and useless.
-        if (list.length && connected === 0 && !fatal) out.status = 'degraded';
+        if (total && connected === 0 && !fatal) out.status = 'degraded';
     } catch { out.whatsapp = 'unknown'; }
     res.status(fatal ? 503 : 200).json(out);
 });
