@@ -6,9 +6,10 @@
  * has shifted these shapes between releases), updates the state cache, and
  * hands message-status events to whichever stack owns the instance.
  *
- * Instance naming keeps the two stacks apart and cannot collide:
- *   wareach_user_<userId>     — clinic UI sessions   (whatsapp.js)
- *   wareach_api_<sessionUuid> — MolarPlus B2B        (apiSessions.js)
+ * Instances are named per organisation (`wareach_org_<uuid>`, or the older
+ * `wareach_user_<id>` for workspaces imported from SQLite) and resolved through
+ * orgInstances. Partner workspaces (partnerApi.js) are ordinary organisations
+ * too, so everything here treats them the same way.
  */
 
 const express = require('express');
@@ -207,12 +208,12 @@ function handleEvent(body) {
             const status = normalizeStatus(data);
             if (!messageId || !status) break;
 
-            if (instance.startsWith(API_PREFIX)) {
-                const sessionId = sessionIdFromInstance(instance);
-                messageStatusHandlers.api?.(sessionId, messageId, status);
-            } else if (instance.startsWith(USER_PREFIX)) {
-                messageStatusHandlers.user?.(userIdFromInstance(instance), messageId, status);
-            }
+            // Routed by lookup, not by name prefix. The prefix check predates
+            // UUID orgs: every workspace created since signup moved to
+            // `wareach_org_<uuid>` names, which never matched 'wareach_user_',
+            // so their receipts were dropped here without a trace.
+            const orgId = userIdFromInstance(instance);
+            if (orgId) messageStatusHandlers.user?.(orgId, messageId, status);
             break;
         }
 
@@ -278,6 +279,7 @@ module.exports = {
     instanceNameForSession,
     userIdFromInstance,
     sessionIdFromInstance,
+    clearReArm,
     ackToStatus,
     USER_PREFIX,
     API_PREFIX,

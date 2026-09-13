@@ -14,6 +14,8 @@ const state = require('./evolution/state');
 const hooks = require('./evolution/webhook');
 const inbound = require('./inbound');
 const db = require('./db');
+const orgInstances = require('./orgInstances');
+const partners = require('./partners');
 
 let io = null;
 
@@ -140,6 +142,38 @@ const disconnectClient = async (userId) => {
         console.error(`[WA User ${userId}] disconnect failed:`, error.message);
         return false;
     }
+};
+
+/**
+ * Unpair and STOP. The partner flavour of disconnect.
+ *
+ * disconnectClient rebuilds the instance and starts pairing straight away,
+ * which suits a dashboard user who is standing there to scan the next QR. A
+ * partner workspace has nobody standing there: rebuilding would leave an
+ * instance cycling through QR codes forever, with the re-arm backoff dutifully
+ * reconnecting it every five minutes. So this tears down and leaves nothing
+ * behind. The wa_instances row stays, and the next connect recreates the
+ * Evolution instance from it.
+ *
+ * Idempotent: an instance Evolution no longer has is already unlinked.
+ */
+const unlinkClient = async (orgId) => {
+    const instance = hooks.instanceNameForUser(orgId);
+    if (!instance) return true;
+    hooks.clearReArm(instance);
+    state.update(instance, { isConnected: false, currentQR: '', phone: null, lastEvent: 'unlinked' });
+    try { await client.logout(instance); } catch (e) { if (e.status !== 404) console.log(`[WA ${orgId}] logout skipped: ${e.message}`); }
+    try {
+        await client.deleteInstance(instance);
+    } catch (e) {
+        if (e.status !== 404) {
+            console.error(`[WA ${orgId}] unlink could not delete the instance: ${e.message}`);
+            return false;
+        }
+    }
+    hooks.clearReArm(instance);
+    state.remove(instance);
+    return true;
 };
 
 /**
@@ -316,11 +350,82 @@ hooks.onMessageStatus('user', (userId, messageId, status) => {
                 });
         }
     );
+
+    recordApiReceipt(userId, messageId, status);
 });
 
-const bootAll = async (userIds = []) => {
+/**
+ * Receipts for messages sent through the programmable API.
+ *
+ * api_sends rows were written once, as 'sent', and never touched again, so an
+ * integrator could not learn that a message was delivered, read, or failed
+ * after WhatsApp accepted it. Forward-only: receipts arrive out of order and
+ * more than once, and 'read' must never be walked back to 'delivered'. A
+ * failure only counts while the message has not been delivered, because a
+ * delivered message cannot un-deliver.
+ */
+const RECEIPT_RANK = (expr) => `CASE ${expr} WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 0 END`;
+
+async function recordApiReceipt(orgId, messageId, status) {
+    if (!orgId || !messageId || !['sent', 'delivered', 'read', 'failed'].includes(status)) return;
+    try {
+        const row = await db.one(
+            `UPDATE api_sends SET status = ?::text, updated_at = NOW()
+              WHERE wa_message_id = ? AND org_id = ?
+                AND ((?::text = 'failed' AND status = 'sent')
+                  OR (?::text <> 'failed' AND ${RECEIPT_RANK('status')} < ${RECEIPT_RANK('?::text')}))
+              RETURNING reference, to_number`,
+            [status, messageId, orgId, status, status, status]);
+        // 'sent' is what the send call already answered synchronously; only the
+        // outcomes the caller could not have known are worth a webhook.
+        if (!row || status === 'sent') return;
+        await require('./webhooks').emit(orgId, `message.${status}`, {
+            message_id: messageId,
+            reference: row.reference || null,
+            to: row.to_number,
+            status,
+        });
+    } catch (e) {
+        console.error(`[receipts] could not record ${status} for ${messageId}: ${e.message}`);
+    }
+}
+
+/**
+ * Tell integrators when a number connects or drops.
+ *
+ * A product sending through this box needs to know when to stop: without it,
+ * the only signal was a failed send, and by then the patient's message is
+ * already late. Fires on the transition only (the state cache reports real
+ * changes), and again if the phone number arrives after the connection does.
+ * wa_instances.status is kept in step here too, since nothing else wrote it.
+ */
+state.onChange((instanceName, next, prev) => {
+    const orgId = hooks.userIdFromInstance(instanceName);
+    if (!orgId) return;
+    const flipped = !!prev.isConnected !== !!next.isConnected;
+    const phoneArrived = next.isConnected && next.phone && prev.phone !== next.phone;
+    if (!flipped && !phoneArrived) return;
+
+    const status = next.isConnected ? 'connected' : 'disconnected';
+    orgInstances.setStatus(instanceName, status, next.isConnected ? next.phone : null);
+    require('./webhooks').emit(orgId, `session.${status}`, {
+        status,
+        phone_number: next.isConnected ? (next.phone || null) : null,
+    }).catch(() => {});
+});
+
+const bootAll = async (orgIds = []) => {
     await state.seed();
-    for (const id of userIds) initializeUserClient(id);
+    for (const id of orgIds) {
+        // Partner workspaces pair on request, from the partner's own UI. Waking
+        // one that Evolution no longer holds would create a fresh instance and
+        // start cycling QR codes for a clinic that is not looking at any of them.
+        if (partners.isPartnerOrg(id)) {
+            const name = hooks.instanceNameForUser(id);
+            if (!name || !state.has(name)) continue;
+        }
+        initializeUserClient(id);
+    }
     state.startReconciler();
 };
 
@@ -335,6 +440,7 @@ module.exports = {
     sendMessage,
     sendMedia,
     disconnectClient,
+    unlinkClient,
     setIo,
     getStatus,
     initializeUserClient,

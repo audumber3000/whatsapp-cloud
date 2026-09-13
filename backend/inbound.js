@@ -152,6 +152,14 @@ async function handle(userId, instance, msg) {
 
     const intent = detectIntent(msg);
 
+    // A partner workspace is a clinic's own phone that a partner product
+    // (MolarPlus) sends through. The clinic reads its replies on that phone,
+    // in WhatsApp itself, so this box must stay invisible there: no blue ticks
+    // that make a patient's message look already handled, no away messages
+    // the clinic never wrote, and no copies of patients' photos and X-rays on
+    // our disk. Opt-outs and the replied webhook still apply.
+    const partnerOwned = require('./partners').isPartnerOrg(userId);
+
     let contact = await dbGet(
         'SELECT id, name, opted_out FROM contacts WHERE org_id = ? AND phone = ?',
         [userId, msg.from]
@@ -166,7 +174,7 @@ async function handle(userId, instance, msg) {
     }
 
     let mediaPath = null;
-    if (msg.mediaType) mediaPath = await saveInboundMedia(instance, msg);
+    if (msg.mediaType && !partnerOwned) mediaPath = await saveInboundMedia(instance, msg);
 
     await dbRun(
         `INSERT INTO inbound_messages
@@ -252,12 +260,12 @@ async function handle(userId, instance, msg) {
     }
 
     // Outside business hours, say so rather than leaving them wondering.
-    await maybeSendAway(userId, conversation, msg.from);
+    if (!partnerOwned) await maybeSendAway(userId, conversation, msg.from);
 
     // "New reply" is offered on the Settings page and had no sender anywhere —
     // the toggle could never have done anything. Off by default, because a busy
     // clinic would get dozens a day and they are already visible in the Inbox.
-    if (intent !== 'opt_out') {
+    if (intent !== 'opt_out' && !partnerOwned) {
         const who = contact?.name && contact.name !== 'Unknown' ? contact.name : `+${msg.from}`;
         const preview = (msg.text || `[${msg.mediaType || 'message'}]`).slice(0, 300);
         await require('./notify').dispatch(userId, 'new_reply', {
@@ -279,6 +287,7 @@ async function handle(userId, instance, msg) {
     });
 
     // Blue ticks: the patient can see the clinic read it.
+    if (partnerOwned) return;
     client.markAsRead(instance, [{ remoteJid: msg.key.remoteJid, fromMe: false, id: msg.messageId }])
         .catch(() => {});
 }

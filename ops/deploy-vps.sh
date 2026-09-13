@@ -95,6 +95,9 @@ EMAIL_PASS=
 EMAIL_FROM=
 
 MOLARPLUS_URL=
+# Partner API for MolarPlus. Set both, then restart; see .env.prod.example.
+MOLARPLUS_PARTNER_KEY=
+MOLARPLUS_ALLOWED_IPS=
 EOF
     chmod 600 "$ENV_FILE"
 fi

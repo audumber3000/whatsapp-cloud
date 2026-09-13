@@ -45,6 +45,10 @@ services:
       - WAREACH_PUBLIC_URL=${WAREACH_PUBLIC_URL}
       - MOLARPLUS_URL=${MOLARPLUS_URL}
       - WAREACH_WEBHOOK_SECRET=${WAREACH_WEBHOOK_SECRET}
+      # Partner API (partnerApi.js): MolarPlus connects clinics' own numbers.
+      # Both must be set or the partner stays switched off.
+      - MOLARPLUS_PARTNER_KEY=${MOLARPLUS_PARTNER_KEY:-}
+      - MOLARPLUS_ALLOWED_IPS=${MOLARPLUS_ALLOWED_IPS:-}
       - EMAIL_HOST=${EMAIL_HOST}
       - EMAIL_PORT=${EMAIL_PORT}
       - EMAIL_USER=${EMAIL_USER}

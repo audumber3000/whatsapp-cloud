@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test evolution/state.test.js"
+    "test": "node --test evolution/state.test.js partners.test.js"
   },
   "keywords": [],
   "author": "",

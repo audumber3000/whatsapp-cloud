@@ -83,10 +83,21 @@ app.get('/api/health', async (req, res) => {
  * per request with random garbage and bypass the IP limit entirely. An invalid
  * token falls back to the IP, which is the right bucket for a 401 flood.
  */
+// Partner products (MolarPlus) provisioning their customers' own numbers.
+// Mounted ahead of the dashboard limiter: it has its own, keyed on the real
+// source address, and its own auth (partner key + allowlisted IP).
+app.use('/api/partner/v1', require('./partnerApi').router());
+
 app.use('/api', hardening.rateLimit({
     max: 600, windowMs: 60_000, name: 'dashboard',
     keyOf: (req) => {
         const raw = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        // API keys get a bucket each. Keyed on IP, every workspace a partner
+        // sends for shared one 600/min allowance, because they all arrive from
+        // the partner's one server. publicApi.js still caps each workspace.
+        if (raw.startsWith('wr_')) {
+            return `k:${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 24)}`;
+        }
         if (raw) {
             try { return `u:${jwt.verify(raw, JWT_SECRET).id}`; } catch { /* fall through to IP */ }
         }
@@ -1223,6 +1234,8 @@ server.listen(PORT, async () => {
     // launching several Chromium processes at once.
     // Instance names must be in memory before any send resolves one.
     await require('./orgInstances').load().catch(e => console.error('[instances] load failed:', e.message));
+    // Before bootAll: it skips waking partner workspaces nobody has asked to pair.
+    await require('./partners').load().catch(e => console.error('[partners] load failed:', e.message));
 
     db.all('SELECT id FROM organisations', [], async (err, rows) => {
         const userIds = (!err && rows) ? rows.map(r => r.id) : [];

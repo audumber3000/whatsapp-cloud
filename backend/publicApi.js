@@ -13,6 +13,8 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
 const whatsappClient = require('./whatsapp');
+const config = require('./config');
+const partners = require('./partners');
 
 const dbGet = (sql, p = []) => new Promise((res, rej) => db.get(sql, p, (e, r) => e ? rej(e) : res(r)));
 const dbRun = (sql, p = []) => new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res(this); }));
@@ -53,13 +55,29 @@ function authenticateApiKey(req, res, next) {
         return res.status(401).json({ error: 'Missing API key', hint: 'Send it as: Authorization: Bearer <key>' });
     }
     db.get(
-        `SELECT k.id AS key_id, k.org_id, o.name AS org_name
-           FROM api_keys k JOIN organisations o ON o.id = k.org_id
+        `SELECT k.id AS key_id, k.org_id, o.name AS org_name, pl.partner
+           FROM api_keys k
+           JOIN organisations o ON o.id = k.org_id
+           LEFT JOIN partner_links pl ON pl.org_id = k.org_id
           WHERE k.key_hash = ? AND k.revoked_at IS NULL`,
         [sha256(key)],
         (err, row) => {
             if (err) return res.status(500).json({ error: 'Internal error' });
             if (!row) return res.status(401).json({ error: 'Invalid API key' });
+            // A partner workspace's key only works from the partner's servers.
+            // This box speaks plain HTTP, so a key is readable by anyone on the
+            // path between the partner and here; pinning it to the partner's
+            // source address is what keeps a copied key useless.
+            if (row.partner) {
+                const partner = config.partners[row.partner];
+                if (!partner) {
+                    return res.status(403).json({ error: 'This workspace belongs to a partner that is not enabled on this server' });
+                }
+                const ip = partners.sourceIp(req);
+                if (!partners.ipAllowed(partner, ip)) {
+                    return res.status(403).json({ error: 'This key cannot be used from this address', ip });
+                }
+            }
             // Best-effort; a failed touch must never block a send.
             db.run('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [row.key_id], () => {});
             req.apiUser = { org_id: row.org_id, username: row.org_name, key_id: row.key_id };
@@ -94,6 +112,62 @@ function rateLimit(req, res, next) {
     next();
 }
 
+/**
+ * One send at a time per workspace, with a gap between them.
+ *
+ * API traffic went out as fast as callers could post it. A partner product
+ * booking a morning's worth of appointments, or a reminder job firing on the
+ * quarter hour, can put a burst of identical-looking messages on one personal
+ * number in a second, and a burst is exactly what gets a number restricted.
+ * Automations and broadcasts already pace themselves; this brings API sends in
+ * line. A backlog past `maxQueued` is refused rather than held, so a runaway
+ * caller gets a 429 instead of a queue that outlives its own timeouts.
+ */
+function createPacer({ gapMs, maxQueued, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+    const lanes = new Map();   // key -> { tail, queued, lastAt }
+
+    const sweep = setInterval(() => {
+        const t = now();
+        for (const [k, lane] of lanes) if (!lane.queued && t - lane.lastAt > 10 * 60 * 1000) lanes.delete(k);
+    }, 60 * 1000);
+    if (sweep.unref) sweep.unref();
+
+    return {
+        /** Resolves with fn's result, or returns null at once if the lane is full. */
+        run(key, fn) {
+            let lane = lanes.get(key);
+            if (!lane) { lane = { tail: Promise.resolve(), queued: 0, lastAt: -Infinity }; lanes.set(key, lane); }
+            if (lane.queued >= maxQueued) return null;
+            lane.queued += 1;
+            const job = lane.tail.then(async () => {
+                const wait = lane.lastAt + gapMs - now();
+                if (wait > 0) await sleep(wait);
+                try { return await fn(); } finally { lane.lastAt = now(); }
+            });
+            lane.tail = job.catch(() => {}).finally(() => { lane.queued -= 1; });
+            return job;
+        },
+        depth(key) { return lanes.get(key)?.queued || 0; },
+    };
+}
+
+const pacer = createPacer({
+    gapMs: parseInt(process.env.API_SEND_GAP_MS, 10) || 1200,
+    maxQueued: parseInt(process.env.API_SEND_MAX_QUEUED, 10) || 40,
+});
+
+/** Evolution picks image vs document vs audio from this, so a PDF must say it is one. */
+const MIME_BY_EXT = {
+    pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    webp: 'image/webp', mp4: 'video/mp4', mp3: 'audio/mpeg', ogg: 'audio/ogg',
+};
+function resolveMimetype(mimetype, filename) {
+    const given = String(mimetype || '').trim().toLowerCase();
+    if (/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(given) && !given.startsWith('image/svg')) return given;
+    const ext = String(filename || '').toLowerCase().split('.').pop();
+    return MIME_BY_EXT[ext] || '';
+}
+
 function router() {
     const r = express.Router();
     r.use(express.json({ limit: '2mb' }));
@@ -111,7 +185,8 @@ function router() {
 
     // Send a message through this user's WhatsApp.
     r.post('/messages', authenticateApiKey, rateLimit, async (req, res) => {
-        const { to, text, media_url, caption, filename, reference } = req.body || {};
+        const { to, text, media_url, caption, filename, mimetype } = req.body || {};
+        const reference = req.body?.reference == null ? null : String(req.body.reference).slice(0, 128);
 
         const number = String(to || '').replace(/\D/g, '');
         if (!number) {
@@ -139,27 +214,51 @@ function router() {
             });
         }
 
-        let result;
-        if (media_url) {
-            result = await whatsappClient.sendMediaByUrl(req.apiUser.org_id, number, {
-                url: media_url, caption: caption || text || '', filename,
+        const orgId = req.apiUser.org_id;
+        const job = pacer.run(orgId, async () => {
+            // Re-checked inside the lane: the number can drop while a send waits
+            // its turn, and a message sent to a closed instance is simply lost.
+            if (!whatsappClient.getStatus(orgId).isConnected) return { offline: true };
+            if (media_url) {
+                return {
+                    result: await whatsappClient.sendMediaByUrl(orgId, number, {
+                        url: media_url,
+                        caption: caption || text || '',
+                        filename,
+                        mimetype: resolveMimetype(mimetype, filename),
+                    }),
+                };
+            }
+            return { result: await whatsappClient.sendMessage(orgId, number, text) };
+        });
+        if (!job) {
+            return res.status(429).json({
+                error: 'Too many messages waiting to send from this number',
+                retry_after_seconds: 30,
             });
-        } else {
-            result = await whatsappClient.sendMessage(req.apiUser.org_id, number, text);
+        }
+        const outcome = await job;
+        if (outcome.offline) {
+            return res.status(409).json({
+                error: 'WhatsApp is not connected for this account',
+                hint: 'The account owner needs to re-link their phone in WA Reach.',
+            });
         }
 
-        const messageId = typeof result === 'string' ? result : null;
-        const ok = !!result;
+        const messageId = typeof outcome.result === 'string' ? outcome.result : null;
+        const ok = !!outcome.result;
 
-        dbRun(
+        // Awaited, unlike before: WhatsApp's first receipt for this message can
+        // arrive within a second, and it has nothing to update until this row exists.
+        await dbRun(
             `INSERT INTO api_sends (org_id, api_key_id, to_number, body, has_media, wa_message_id, status, error_reason, reference)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [req.apiUser.org_id, req.apiUser.key_id, number, text || caption || '', !!media_url, messageId,
-             ok ? 'sent' : 'failed', ok ? null : 'Send failed', reference || null]
-        ).catch(() => {});
+            [orgId, req.apiUser.key_id, number, text || caption || '', !!media_url, messageId,
+             ok ? 'sent' : 'failed', ok ? null : 'Send failed', reference]
+        ).catch((e) => console.error('[api] could not record a send:', e.message));
 
         if (!ok) return res.status(502).json({ error: 'WhatsApp rejected the message' });
-        res.status(201).json({ success: true, message_id: messageId, to: number, reference: reference || null });
+        res.status(201).json({ success: true, message_id: messageId, to: number, reference });
     });
 
     // What this key has sent, and what happened to it.
@@ -179,4 +278,4 @@ function router() {
     return r;
 }
 
-module.exports = { router, issueKey, authenticateApiKey, generateKey };
+module.exports = { router, issueKey, authenticateApiKey, generateKey, createPacer, resolveMimetype };

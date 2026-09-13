@@ -23,6 +23,8 @@ const EVENTS = [
     'message.failed',     // never left
     'message.replied',    // the patient wrote back, with the parsed intent
     'contact.opted_out',  // stop honouring this number
+    'session.connected',    // the number is linked and can send
+    'session.disconnected', // the number dropped; sends will fail until it is back
 ];
 
 /* ── SSRF ───────────────────────────────────────────────────────────────── */
@@ -250,20 +252,39 @@ async function deliverOne(row) {
     }
 }
 
-/** Called from the scheduler tick. Bounded per pass so one org cannot hog it. */
+/**
+ * Called from the scheduler tick.
+ *
+ * Drains in batches of 50 until nothing is due or the time budget runs out. A
+ * single batch per minute capped delivery at 50 events a minute for the whole
+ * box, and one partner with a busy morning of receipts would have queued
+ * everyone's cancellations behind its own. The budget stays under the one
+ * minute tick, and `sweeping` stops two ticks from delivering the same rows.
+ */
+const SWEEP_BUDGET_MS = 40_000;
+let sweeping = false;
+
 async function processDue() {
+    if (sweeping) return;
+    sweeping = true;
+    const started = Date.now();
     try {
-        const due = await db.many(
-            `SELECT id, endpoint_id, event, payload, attempts
-               FROM webhook_deliveries
-              WHERE status = 'pending' AND next_attempt_at <= NOW()
-              ORDER BY next_attempt_at LIMIT 50`);
-        // Sequential on purpose: fifty simultaneous outbound requests from the
-        // same box is itself a way to look like an attacker.
-        for (const row of due) await deliverOne(row).catch((e) =>
-            console.error('[webhooks] delivery failed:', e.message));
+        while (Date.now() - started < SWEEP_BUDGET_MS) {
+            const due = await db.many(
+                `SELECT id, endpoint_id, event, payload, attempts
+                   FROM webhook_deliveries
+                  WHERE status = 'pending' AND next_attempt_at <= NOW()
+                  ORDER BY next_attempt_at LIMIT 50`);
+            // Sequential on purpose: fifty simultaneous outbound requests from the
+            // same box is itself a way to look like an attacker.
+            for (const row of due) await deliverOne(row).catch((e) =>
+                console.error('[webhooks] delivery failed:', e.message));
+            if (due.length < 50) break;
+        }
     } catch (e) {
         console.error('[webhooks] sweep failed:', e.message);
+    } finally {
+        sweeping = false;
     }
 }
 
