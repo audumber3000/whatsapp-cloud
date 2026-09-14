@@ -398,7 +398,25 @@ async function recordApiReceipt(orgId, messageId, status) {
  * already late. Fires on the transition only (the state cache reports real
  * changes), and again if the phone number arrives after the connection does.
  * wa_instances.status is kept in step here too, since nothing else wrote it.
+ *
+ * A drop is only reported once it has lasted DISCONNECT_GRACE_MS. Baileys
+ * closes and reopens the socket routinely: right after a QR scan (restart
+ * required), and on ordinary network hiccups, usually back within seconds.
+ * Reporting every one would make a partner route a clinic's messages to a paid
+ * channel for a blip. A connection is always reported at once, so anything
+ * that did stop routing here on a failed send starts again straight away.
  */
+const DISCONNECT_GRACE_MS = parseInt(process.env.SESSION_DISCONNECT_GRACE_MS, 10) || 90_000;
+const pendingDrop = new Map();   // instanceName -> timer
+
+function reportSession(orgId, instanceName, status, phone) {
+    orgInstances.setStatus(instanceName, status, status === 'connected' ? phone : null);
+    require('./webhooks').emit(orgId, `session.${status}`, {
+        status,
+        phone_number: status === 'connected' ? (phone || null) : null,
+    }).catch(() => {});
+}
+
 state.onChange((instanceName, next, prev) => {
     const orgId = hooks.userIdFromInstance(instanceName);
     if (!orgId) return;
@@ -406,12 +424,21 @@ state.onChange((instanceName, next, prev) => {
     const phoneArrived = next.isConnected && next.phone && prev.phone !== next.phone;
     if (!flipped && !phoneArrived) return;
 
-    const status = next.isConnected ? 'connected' : 'disconnected';
-    orgInstances.setStatus(instanceName, status, next.isConnected ? next.phone : null);
-    require('./webhooks').emit(orgId, `session.${status}`, {
-        status,
-        phone_number: next.isConnected ? (next.phone || null) : null,
-    }).catch(() => {});
+    if (next.isConnected) {
+        const timer = pendingDrop.get(instanceName);
+        if (timer) { clearTimeout(timer); pendingDrop.delete(instanceName); }
+        reportSession(orgId, instanceName, 'connected', next.phone);
+        return;
+    }
+
+    if (pendingDrop.has(instanceName)) return;
+    const timer = setTimeout(() => {
+        pendingDrop.delete(instanceName);
+        if (state.get(instanceName).isConnected) return;   // came back in time
+        reportSession(orgId, instanceName, 'disconnected', null);
+    }, DISCONNECT_GRACE_MS);
+    if (timer.unref) timer.unref();
+    pendingDrop.set(instanceName, timer);
 });
 
 const bootAll = async (orgIds = []) => {

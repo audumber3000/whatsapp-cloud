@@ -240,7 +240,13 @@ async function deliverOne(row) {
           WHERE id = ? RETURNING consecutive_fails`,
         [String(error).slice(0, 300), ep.id]);
 
-    if (fails && fails.consecutive_fails >= DISABLE_AFTER) {
+    // Partner endpoints (partnerApi.js) are never switched off. The partner is
+    // the only product that knows a clinic's connection state, and a disabled
+    // endpoint would stay silent for that clinic until someone happened to
+    // reconnect it. A long outage on the partner's side is exactly when this
+    // counter fills up; each delivery still gives up after its own retries.
+    const partnerManaged = String(ep.name || '').startsWith('partner:');
+    if (fails && fails.consecutive_fails >= DISABLE_AFTER && !partnerManaged) {
         await db.query('UPDATE webhook_endpoints SET active = FALSE WHERE id = ?', [ep.id]);
         console.error(`[webhooks] disabled ${ep.name} after ${DISABLE_AFTER} consecutive failures`);
         require('./notify').dispatch(ep.org_id, 'disconnected', {
