@@ -210,6 +210,18 @@ function Workspace({ apiUrl, auth, jsonHeaders, onToast, canManage }) {
                           placeholder="Thanks for writing! We are closed right now and will reply when we open at 9:30am."
                           aria-label="Away message" />
             </Section>
+
+            <Section title="Read receipts"
+                     sub="Whether people see blue ticks as soon as their message reaches you.">
+                <label className="toggle-row">
+                    <input type="checkbox" checked={form.auto_read_receipts !== false} disabled={!canManage}
+                           onChange={(e) => setForm({ ...form, auto_read_receipts: e.target.checked })} />
+                    <span>
+                        <strong>Mark messages as read when they arrive</strong>
+                        <small>Turn this off if you answer on the phone itself. While it is on, WhatsApp treats every new message as already read, so your phone never shows a notification for it.</small>
+                    </span>
+                </label>
+            </Section>
         </>
     );
 }

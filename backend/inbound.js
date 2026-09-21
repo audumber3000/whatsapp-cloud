@@ -286,8 +286,14 @@ async function handle(userId, instance, msg) {
         received_at: new Date().toISOString(),
     });
 
-    // Blue ticks: the patient can see the clinic read it.
+    // Blue ticks: the patient can see the clinic read it. Not for a workspace
+    // that answers on the phone: WhatsApp syncs read state to every linked
+    // device, so a message marked read here arrives on the phone as already
+    // handled and the phone never notifies anyone about it.
     if (partnerOwned) return;
+    const org = await dbGet('SELECT auto_read_receipts FROM organisations WHERE id = ?', [userId])
+        .catch(() => null);
+    if (org && org.auto_read_receipts === false) return;
     client.markAsRead(instance, [{ remoteJid: msg.key.remoteJid, fromMe: false, id: msg.messageId }])
         .catch(() => {});
 }

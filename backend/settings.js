@@ -104,7 +104,7 @@ function router({ authenticateToken, requireRole }) {
         try {
             const o = await db.one(
                 `SELECT id, name, slug, timezone, locale, business_hours, plan, logo_url,
-                        away_message, away_enabled, created_at
+                        away_message, away_enabled, auto_read_receipts, created_at
                    FROM organisations WHERE id = ?`, [req.user.org_id]);
             if (!o) return res.status(404).json({ error: 'Workspace not found' });
             res.json({ ...o, business_hours: o.business_hours || {} });
@@ -131,17 +131,18 @@ function router({ authenticateToken, requireRole }) {
 
         try {
             const before = await db.one(
-                'SELECT name, timezone, locale, business_hours, away_message, away_enabled FROM organisations WHERE id = ?',
+                'SELECT name, timezone, locale, business_hours, away_message, away_enabled, auto_read_receipts FROM organisations WHERE id = ?',
                 [req.user.org_id]);
 
             const after = await db.one(
                 `UPDATE organisations
                     SET name = ?, timezone = ?, locale = ?, business_hours = ?,
                         logo_url = COALESCE(?, logo_url),
-                        away_message = ?, away_enabled = ?, updated_at = NOW()
+                        away_message = ?, away_enabled = ?,
+                        auto_read_receipts = COALESCE(?, auto_read_receipts), updated_at = NOW()
                   WHERE id = ?
                   RETURNING id, name, slug, timezone, locale, business_hours, plan, logo_url,
-                            away_message, away_enabled`,
+                            away_message, away_enabled, auto_read_receipts`,
                 [name,
                  String(req.body?.timezone || 'Asia/Kolkata').slice(0, 64),
                  String(req.body?.locale || 'en-IN').slice(0, 16),
@@ -149,6 +150,9 @@ function router({ authenticateToken, requireRole }) {
                  logo,
                  String(req.body?.away_message || '').trim().slice(0, 1000) || null,
                  !!req.body?.away_enabled,
+                 // Absent means unchanged: an older page that never sent this
+                 // field must not quietly switch read receipts off.
+                 typeof req.body?.auto_read_receipts === 'boolean' ? req.body.auto_read_receipts : null,
                  req.user.org_id]);
 
             audit(req, 'workspace.update', 'organisation', req.user.org_id, before, {
