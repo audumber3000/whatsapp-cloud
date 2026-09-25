@@ -62,6 +62,27 @@ services:
       postgres:
         condition: service_healthy
 
+  # ── TLS terminator ──────────────────────────────────────────────────────────
+  # Fronts the app on wa.clinohealth.com with automatic Let's Encrypt certs.
+  # Until this existed the box served plain HTTP on a bare IP, so every
+  # password, JWT and API key crossed the network in cleartext — while the
+  # access log showed active credential-stuffing against /api/login.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"      # ACME HTTP challenge + redirect to HTTPS
+      - "443:443"
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and their account key. NOT optional: without persistence
+      # every restart re-requests a cert and Let's Encrypt refuses after five
+      # duplicates in a week.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - wareach
+
   # ── Evolution API (WhatsApp transport) ──────────────────────────────────────
   evolution:
     # Pinned. v2.1.1 (the version in Evolution's own docs) ships a Baileys
@@ -150,6 +171,8 @@ services:
       retries: 5
 
 volumes:
+  caddy_data:
+  caddy_config:
   evolution_instances:
   postgres_data:
   redis_data:

@@ -1,0 +1,41 @@
+# TLS terminator in front of WA Reach.
+#
+# Caddy provisions and renews Let's Encrypt certificates on its own; the only
+# requirements are that wa.clinohealth.com resolves to this box and that ports
+# 80 and 443 reach it (80 is needed for the ACME HTTP challenge and for the
+# redirect to HTTPS).
+#
+# Certificates live on the caddy_data volume. That volume is not optional:
+# without it every container restart requests a fresh certificate and Let's
+# Encrypt allows only five duplicates per week before refusing for days.
+
+{
+	email audumberchaudhari1003@gmail.com
+}
+
+wa.clinohealth.com {
+	encode zstd gzip
+
+	# The app is on the internal compose network; it never needs a host port.
+	reverse_proxy wareach:3000 {
+		# The app runs with `trust proxy = 1`, so it reads the client address
+		# from X-Forwarded-For. Caddy sets that, plus -Proto and -Host, which
+		# is what keeps rate limiting and the audit log keyed to real clients
+		# rather than to this container.
+		header_up X-Real-IP {remote_host}
+	}
+
+	# HSTS. Deliberately modest and without preload: this host has served
+	# plain HTTP on a bare IP, and a long max-age is hard to walk back if the
+	# certificate ever lapses.
+	header {
+		Strict-Transport-Security "max-age=86400"
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
