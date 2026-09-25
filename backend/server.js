@@ -70,6 +70,16 @@ app.get('/api/health', async (req, res) => {
         // A box with instances but none paired is up, and useless.
         if (total && connected === 0 && !fatal) out.status = 'degraded';
     } catch { out.whatsapp = 'unknown'; }
+    // Surfaced because a silent mailer hid a ten-day outage: if this is not
+    // 'ok', nobody is being told when anything else breaks.
+    try {
+        const mail = require('./email');
+        out.smtp = mail.getState();
+        if (out.smtp !== 'ok') {
+            out.smtp_error = mail.getLastError() || undefined;
+            if (!fatal && out.status === 'ok') out.status = 'degraded';
+        }
+    } catch { out.smtp = 'unknown'; }
     res.status(fatal ? 503 : 200).json(out);
 });
 
@@ -1236,6 +1246,9 @@ server.listen(PORT, async () => {
     await require('./orgInstances').load().catch(e => console.error('[instances] load failed:', e.message));
     // Before bootAll: it skips waking partner workspaces nobody has asked to pair.
     await require('./partners').load().catch(e => console.error('[partners] load failed:', e.message));
+    // Prove the mailer works now, not when the first disconnection alert needs
+    // it. A blank or wrong password is otherwise indistinguishable from calm.
+    await require('./email').verify().catch(() => {});
 
     db.all('SELECT id FROM organisations', [], async (err, rows) => {
         const userIds = (!err && rows) ? rows.map(r => r.id) : [];
